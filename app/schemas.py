@@ -365,3 +365,249 @@ class PreReviewNoticeQuery(BaseModel):
     notice_method: Optional[str] = None
     limit: int = 50
     offset: int = 0
+
+
+class MobilityLevel(str, Enum):
+    NORMAL = "normal"
+    NEED_ASSIST = "need_assist"
+    WHEELCHAIR = "wheelchair"
+    BEDRIDDEN = "bedridden"
+
+
+class AccompanyDemandType(str, Enum):
+    FULL_ACCOMPANY = "full_accompany"
+    MATERIAL_ASSIST = "material_assist"
+    TRANSPORTATION = "transportation"
+    SIGNING_ASSIST = "signing_assist"
+    EMOTIONAL_SUPPORT = "emotional_support"
+
+
+class CompanionType(str, Enum):
+    VOLUNTEER = "volunteer"
+    SOCIAL_WORKER = "social_worker"
+    FAMILY = "family"
+
+
+class AppointmentStatus(str, Enum):
+    PENDING_MATCH = "pending_match"
+    MATCHED = "matched"
+    CONFIRMED = "confirmed"
+    IN_SERVICE = "in_service"
+    COMPLETED = "completed"
+    NO_SHOW = "no_show"
+    CANCELLED = "cancelled"
+    REASSIGNED = "reassigned"
+
+
+class ConfirmStatus(str, Enum):
+    UNCONFIRMED = "unconfirmed"
+    COMPANION_CONFIRMED = "companion_confirmed"
+    ELDER_CONFIRMED = "elder_confirmed"
+    BOTH_CONFIRMED = "both_confirmed"
+    DECLINED = "declined"
+
+
+class CompanionResourceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50, description="陪同人姓名")
+    companion_type: CompanionType
+    community: str = Field(..., min_length=1, max_length=100, description="所属社区")
+    phone: str = Field(..., pattern=r"^1[3-9]\d{9}$", description="联系电话")
+    id_card: Optional[str] = Field(None, min_length=8, max_length=20, description="身份证号")
+    available_windows: List[ServiceWindow] = []
+    eligible_items: List[str] = []
+    max_daily_count: int = Field(3, ge=1, le=10, description="每日最大陪同次数")
+    skills: List[str] = []
+    is_active: bool = True
+    remarks: Optional[str] = None
+
+
+class CompanionResourceUpdate(BaseModel):
+    name: Optional[str] = None
+    companion_type: Optional[CompanionType] = None
+    community: Optional[str] = None
+    phone: Optional[str] = None
+    id_card: Optional[str] = None
+    available_windows: Optional[List[ServiceWindow]] = None
+    eligible_items: Optional[List[str]] = None
+    max_daily_count: Optional[int] = None
+    skills: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    remarks: Optional[str] = None
+
+
+class CompanionResource(BaseModel):
+    id: int
+    name: str
+    companion_type: str
+    community: str
+    phone: str
+    id_card: Optional[str]
+    available_windows: List[str]
+    eligible_items: List[str]
+    max_daily_count: int
+    skills: List[str]
+    is_active: bool
+    remarks: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AccompanyAppointmentCreate(BaseModel):
+    elder_name: str = Field(..., min_length=1, max_length=50, description="老人姓名")
+    elder_type: ElderType
+    item_code: str = Field(..., description="办理事项编码")
+    mobility_level: MobilityLevel
+    is_living_alone: bool = Field(False, description="是否独居")
+    accompany_demand_type: AccompanyDemandType
+    expected_date: str = Field(..., description="期望办理日期 YYYY-MM-DD")
+    community: str = Field(..., min_length=1, max_length=100, description="所在社区")
+    contact_phone: str = Field(..., pattern=r"^1[3-9]\d{9}$", description="联系电话")
+    special_notes: Optional[str] = Field(None, description="特殊备注")
+    pre_review_order_id: Optional[int] = Field(None, description="关联预审工单ID")
+    verify_history_id: Optional[int] = Field(None, description="关联校验记录ID")
+    expected_window: Optional[ServiceWindow] = None
+
+
+class MatchedCompanion(BaseModel):
+    companion_id: int
+    companion_name: str
+    companion_type: str
+    phone: str
+    community: str
+    match_priority: int
+    match_score: float
+    match_reasons: List[str]
+
+
+class AccompanyAppointment(BaseModel):
+    id: int
+    appointment_no: str
+    elder_name: str
+    elder_type: str
+    item_code: str
+    item_name: str
+    mobility_level: str
+    is_living_alone: bool
+    accompany_demand_type: str
+    expected_date: str
+    community: str
+    contact_phone: str
+    special_notes: Optional[str]
+    pre_review_order_id: Optional[int]
+    verify_history_id: Optional[int]
+    expected_window: Optional[str]
+    status: str
+    risk_level: str
+    missing_materials: List[Dict[str, Any]]
+    match_priority: int
+    recommended_companion_id: Optional[int]
+    recommended_companion_name: Optional[str]
+    recommended_companion_type: Optional[str]
+    recommended_companion_phone: Optional[str]
+    expected_service_period: Optional[str]
+    material_reminders: List[str]
+    route_hints: List[str]
+    risk_alerts: List[str]
+    confirm_status: str
+    cancel_reason: Optional[str]
+    cancel_remark: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AccompanyAppointmentDetail(BaseModel):
+    appointment: AccompanyAppointment
+    matched_candidates: List[MatchedCompanion]
+    related_pre_review_order: Optional[Dict[str, Any]]
+    service_history: List[Dict[str, Any]]
+
+
+class AccompanyAppointmentReassign(BaseModel):
+    new_companion_id: int = Field(..., description="新陪同人ID")
+    reassign_reason: str = Field(..., min_length=1, description="改派原因")
+    operator: str = Field(..., min_length=1, description="操作人")
+
+
+class AccompanyStatusUpdate(BaseModel):
+    status: AppointmentStatus
+    operator: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class AccompanyCancelRequest(BaseModel):
+    cancel_reason: str = Field(..., min_length=1, description="取消原因分类")
+    cancel_remark: Optional[str] = Field(None, description="取消详细说明")
+    operator: Optional[str] = None
+
+
+class AccompanyFollowUpCreate(BaseModel):
+    appointment_id: int
+    is_companion_arrived: bool = Field(..., description="陪同人是否按时到达")
+    is_elder_satisfied: bool = Field(..., description="老人是否满意")
+    materials_completed: bool = Field(..., description="材料是否齐全")
+    failed_materials: List[str] = []
+    service_duration_minutes: int = Field(0, ge=0, description="服务时长(分钟)")
+    issues: List[str] = []
+    suggestions: Optional[str] = None
+    follower: str = Field(..., min_length=1, description="回访人")
+
+
+class AccompanyFollowUpRecord(BaseModel):
+    id: int
+    appointment_id: int
+    appointment_no: str
+    is_companion_arrived: bool
+    is_elder_satisfied: bool
+    materials_completed: bool
+    failed_materials: List[str]
+    service_duration_minutes: int
+    issues: List[str]
+    suggestions: Optional[str]
+    follower: str
+    created_at: datetime
+
+
+class AccompanyStatsCommunity(BaseModel):
+    community: str
+    total_appointments: int
+    completed_count: int
+    completion_rate: float
+    no_show_count: int
+    no_show_rate: float
+
+
+class AccompanyStatsRiskCoverage(BaseModel):
+    community: str
+    high_risk_elder_count: int
+    accompanied_count: int
+    coverage_rate: float
+
+
+class AccompanyStatsCompanionWorkload(BaseModel):
+    companion_id: int
+    companion_name: str
+    companion_type: str
+    community: str
+    total_services: int
+    avg_duration_minutes: float
+
+
+class AccompanyStatsMaterialFailure(BaseModel):
+    material_name: str
+    failure_count: int
+    rank: int
+
+
+class AccompanyStatsOverall(BaseModel):
+    total_appointments: int
+    completed_count: int
+    completion_rate: float
+    no_show_count: int
+    no_show_rate: float
+    cancelled_count: int
+    avg_service_duration_minutes: float
+    satisfaction_rate: float
+    community_stats: List[AccompanyStatsCommunity]
+    risk_coverage_stats: List[AccompanyStatsRiskCoverage]
+    companion_workload_ranking: List[AccompanyStatsCompanionWorkload]
+    material_failure_ranking: List[AccompanyStatsMaterialFailure]

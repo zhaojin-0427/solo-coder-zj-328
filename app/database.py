@@ -10,7 +10,12 @@ from .schemas import (
     StatsItemMissRate, StatsTopErrorMaterial, StatsAgentDistribution, StatsOverall,
     ElderType, AgentRelation, MaterialCategory, PhotoSpec,
     PreReviewWorkOrder, PreReviewStatus, RiskLevel, ServiceWindow,
-    OneTimeNoticeRecord
+    OneTimeNoticeRecord,
+    CompanionResource, CompanionResourceCreate, CompanionResourceUpdate,
+    AccompanyAppointment, MatchedCompanion, AccompanyFollowUpRecord,
+    AccompanyStatsCommunity, AccompanyStatsRiskCoverage,
+    AccompanyStatsCompanionWorkload, AccompanyStatsMaterialFailure,
+    AccompanyStatsOverall
 )
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "elder_service.db")
@@ -18,7 +23,15 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "elder_
 
 class DictEncoder(json.JSONEncoder):
     def default(self, obj):
-        if isinstance(obj, (ElderType, AgentRelation, MaterialCategory, PhotoSpec)):
+        from .schemas import (
+            MobilityLevel, AccompanyDemandType, CompanionType,
+            AppointmentStatus, ConfirmStatus
+        )
+        if isinstance(obj, (
+            ElderType, AgentRelation, MaterialCategory, PhotoSpec,
+            MobilityLevel, AccompanyDemandType, CompanionType,
+            AppointmentStatus, ConfirmStatus, RiskLevel, ServiceWindow
+        )):
             return obj.value
         return super().default(obj)
 
@@ -234,6 +247,131 @@ class Database:
                     supplemented_materials_json TEXT DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(work_order_id) REFERENCES pre_review_orders(id)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS companion_resources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    companion_type TEXT NOT NULL,
+                    community TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    id_card TEXT,
+                    available_windows_json TEXT DEFAULT '[]',
+                    eligible_items_json TEXT DEFAULT '[]',
+                    max_daily_count INTEGER DEFAULT 3,
+                    skills_json TEXT DEFAULT '[]',
+                    is_active INTEGER DEFAULT 1,
+                    remarks TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cr_community ON companion_resources(community)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cr_type ON companion_resources(companion_type)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cr_active ON companion_resources(is_active)
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS accompany_appointments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    appointment_no TEXT UNIQUE NOT NULL,
+                    elder_name TEXT NOT NULL,
+                    elder_type TEXT NOT NULL,
+                    item_code TEXT NOT NULL,
+                    item_name TEXT NOT NULL,
+                    mobility_level TEXT NOT NULL,
+                    is_living_alone INTEGER DEFAULT 0,
+                    accompany_demand_type TEXT NOT NULL,
+                    expected_date TEXT NOT NULL,
+                    community TEXT NOT NULL,
+                    contact_phone TEXT NOT NULL,
+                    special_notes TEXT,
+                    pre_review_order_id INTEGER,
+                    verify_history_id INTEGER,
+                    expected_window TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending_match',
+                    risk_level TEXT NOT NULL DEFAULT 'medium',
+                    missing_materials_json TEXT DEFAULT '[]',
+                    match_priority INTEGER DEFAULT 3,
+                    recommended_companion_id INTEGER,
+                    recommended_companion_name TEXT,
+                    recommended_companion_type TEXT,
+                    recommended_companion_phone TEXT,
+                    expected_service_period TEXT,
+                    material_reminders_json TEXT DEFAULT '[]',
+                    route_hints_json TEXT DEFAULT '[]',
+                    risk_alerts_json TEXT DEFAULT '[]',
+                    confirm_status TEXT NOT NULL DEFAULT 'unconfirmed',
+                    cancel_reason TEXT,
+                    cancel_remark TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_aa_community ON accompany_appointments(community)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_aa_item_code ON accompany_appointments(item_code)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_aa_status ON accompany_appointments(status)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_aa_expected_date ON accompany_appointments(expected_date)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_aa_companion ON accompany_appointments(recommended_companion_id)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_aa_created ON accompany_appointments(created_at)
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS accompany_match_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    appointment_id INTEGER NOT NULL,
+                    companion_id INTEGER NOT NULL,
+                    match_priority INTEGER NOT NULL,
+                    match_score REAL NOT NULL,
+                    match_reasons_json TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(appointment_id) REFERENCES accompany_appointments(id),
+                    FOREIGN KEY(companion_id) REFERENCES companion_resources(id)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS accompany_status_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    appointment_id INTEGER NOT NULL,
+                    appointment_no TEXT NOT NULL,
+                    from_status TEXT,
+                    to_status TEXT NOT NULL,
+                    operator TEXT,
+                    remark TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(appointment_id) REFERENCES accompany_appointments(id)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS accompany_follow_ups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    appointment_id INTEGER NOT NULL,
+                    appointment_no TEXT NOT NULL,
+                    is_companion_arrived INTEGER NOT NULL,
+                    is_elder_satisfied INTEGER NOT NULL,
+                    materials_completed INTEGER NOT NULL,
+                    failed_materials_json TEXT DEFAULT '[]',
+                    service_duration_minutes INTEGER DEFAULT 0,
+                    issues_json TEXT DEFAULT '[]',
+                    suggestions TEXT,
+                    follower TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(appointment_id) REFERENCES accompany_appointments(id)
                 )
             """)
 
@@ -1203,3 +1341,1046 @@ def db_get_pre_review_stats(
 
 
 Database.get_pre_review_stats = db_get_pre_review_stats
+
+
+def _row_to_companion_resource(row: sqlite3.Row) -> CompanionResource:
+    return CompanionResource(
+        id=row["id"],
+        name=row["name"],
+        companion_type=row["companion_type"],
+        community=row["community"],
+        phone=row["phone"],
+        id_card=row["id_card"],
+        available_windows=json.loads(row["available_windows_json"]) if row["available_windows_json"] else [],
+        eligible_items=json.loads(row["eligible_items_json"]) if row["eligible_items_json"] else [],
+        max_daily_count=row["max_daily_count"],
+        skills=json.loads(row["skills_json"]) if row["skills_json"] else [],
+        is_active=bool(row["is_active"]),
+        remarks=row["remarks"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"])
+    )
+
+
+def _row_to_accompany_appointment(row: sqlite3.Row) -> AccompanyAppointment:
+    return AccompanyAppointment(
+        id=row["id"],
+        appointment_no=row["appointment_no"],
+        elder_name=row["elder_name"],
+        elder_type=row["elder_type"],
+        item_code=row["item_code"],
+        item_name=row["item_name"],
+        mobility_level=row["mobility_level"],
+        is_living_alone=bool(row["is_living_alone"]),
+        accompany_demand_type=row["accompany_demand_type"],
+        expected_date=row["expected_date"],
+        community=row["community"],
+        contact_phone=row["contact_phone"],
+        special_notes=row["special_notes"],
+        pre_review_order_id=row["pre_review_order_id"],
+        verify_history_id=row["verify_history_id"],
+        expected_window=row["expected_window"],
+        status=row["status"],
+        risk_level=row["risk_level"],
+        missing_materials=json.loads(row["missing_materials_json"]) if row["missing_materials_json"] else [],
+        match_priority=row["match_priority"],
+        recommended_companion_id=row["recommended_companion_id"],
+        recommended_companion_name=row["recommended_companion_name"],
+        recommended_companion_type=row["recommended_companion_type"],
+        recommended_companion_phone=row["recommended_companion_phone"],
+        expected_service_period=row["expected_service_period"],
+        material_reminders=json.loads(row["material_reminders_json"]) if row["material_reminders_json"] else [],
+        route_hints=json.loads(row["route_hints_json"]) if row["route_hints_json"] else [],
+        risk_alerts=json.loads(row["risk_alerts_json"]) if row["risk_alerts_json"] else [],
+        confirm_status=row["confirm_status"],
+        cancel_reason=row["cancel_reason"],
+        cancel_remark=row["cancel_remark"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"])
+    )
+
+
+def _row_to_follow_up(row: sqlite3.Row) -> AccompanyFollowUpRecord:
+    return AccompanyFollowUpRecord(
+        id=row["id"],
+        appointment_id=row["appointment_id"],
+        appointment_no=row["appointment_no"],
+        is_companion_arrived=bool(row["is_companion_arrived"]),
+        is_elder_satisfied=bool(row["is_elder_satisfied"]),
+        materials_completed=bool(row["materials_completed"]),
+        failed_materials=json.loads(row["failed_materials_json"]) if row["failed_materials_json"] else [],
+        service_duration_minutes=row["service_duration_minutes"],
+        issues=json.loads(row["issues_json"]) if row["issues_json"] else [],
+        suggestions=row["suggestions"],
+        follower=row["follower"],
+        created_at=datetime.fromisoformat(row["created_at"])
+    )
+
+
+def _generate_appointment_no(dt: datetime) -> str:
+    return f"AC{dt.strftime('%Y%m%d%H%M%S')}{dt.microsecond // 1000:03d}"
+
+
+def db_create_companion_resource(self, data: CompanionResourceCreate) -> CompanionResource:
+    now = datetime.now().isoformat()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO companion_resources
+            (name, companion_type, community, phone, id_card, available_windows_json,
+             eligible_items_json, max_daily_count, skills_json, is_active, remarks,
+             created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            data.name, data.companion_type.value, data.community, data.phone, data.id_card,
+            json.dumps([w.value for w in data.available_windows], cls=DictEncoder, ensure_ascii=False),
+            json.dumps(data.eligible_items, ensure_ascii=False),
+            data.max_daily_count,
+            json.dumps(data.skills, ensure_ascii=False),
+            1 if data.is_active else 0,
+            data.remarks,
+            now, now
+        ))
+        new_id = c.lastrowid
+        c.execute("SELECT * FROM companion_resources WHERE id = ?", (new_id,))
+        return _row_to_companion_resource(c.fetchone())
+
+
+Database.create_companion_resource = db_create_companion_resource
+
+
+def db_get_companion_resource(self, resource_id: int) -> Optional[CompanionResource]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM companion_resources WHERE id = ?", (resource_id,))
+        row = c.fetchone()
+        return _row_to_companion_resource(row) if row else None
+
+
+Database.get_companion_resource = db_get_companion_resource
+
+
+def db_list_companion_resources(
+    self,
+    community: Optional[str] = None,
+    companion_type: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    page: int = 1,
+    page_size: int = 20
+) -> Dict[str, Any]:
+    sql = "SELECT * FROM companion_resources WHERE 1=1"
+    count_sql = "SELECT COUNT(*) as cnt FROM companion_resources WHERE 1=1"
+    params = []
+    if community:
+        sql += " AND community = ?"
+        count_sql += " AND community = ?"
+        params.append(community)
+    if companion_type:
+        sql += " AND companion_type = ?"
+        count_sql += " AND companion_type = ?"
+        params.append(companion_type)
+    if is_active is not None:
+        sql += " AND is_active = ?"
+        count_sql += " AND is_active = ?"
+        params.append(1 if is_active else 0)
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(count_sql, params)
+        total = c.fetchone()["cnt"] or 0
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        offset = (page - 1) * page_size
+        full_params = params + [page_size, offset]
+        c.execute(sql, full_params)
+        items = [_row_to_companion_resource(r) for r in c.fetchall()]
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+
+Database.list_companion_resources = db_list_companion_resources
+
+
+def db_update_companion_resource(
+    self,
+    resource_id: int,
+    data: CompanionResourceUpdate
+) -> Optional[CompanionResource]:
+    existing = self.get_companion_resource(resource_id)
+    if not existing:
+        return None
+    now = datetime.now().isoformat()
+    updates = ["updated_at = ?"]
+    params = [now]
+    if data.name is not None:
+        updates.append("name = ?")
+        params.append(data.name)
+    if data.companion_type is not None:
+        updates.append("companion_type = ?")
+        params.append(data.companion_type.value)
+    if data.community is not None:
+        updates.append("community = ?")
+        params.append(data.community)
+    if data.phone is not None:
+        updates.append("phone = ?")
+        params.append(data.phone)
+    if data.id_card is not None:
+        updates.append("id_card = ?")
+        params.append(data.id_card)
+    if data.available_windows is not None:
+        updates.append("available_windows_json = ?")
+        params.append(json.dumps([w.value for w in data.available_windows], cls=DictEncoder, ensure_ascii=False))
+    if data.eligible_items is not None:
+        updates.append("eligible_items_json = ?")
+        params.append(json.dumps(data.eligible_items, ensure_ascii=False))
+    if data.max_daily_count is not None:
+        updates.append("max_daily_count = ?")
+        params.append(data.max_daily_count)
+    if data.skills is not None:
+        updates.append("skills_json = ?")
+        params.append(json.dumps(data.skills, ensure_ascii=False))
+    if data.is_active is not None:
+        updates.append("is_active = ?")
+        params.append(1 if data.is_active else 0)
+    if data.remarks is not None:
+        updates.append("remarks = ?")
+        params.append(data.remarks)
+    params.append(resource_id)
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(f"UPDATE companion_resources SET {', '.join(updates)} WHERE id = ?", params)
+    return self.get_companion_resource(resource_id)
+
+
+Database.update_companion_resource = db_update_companion_resource
+
+
+def db_delete_companion_resource(self, resource_id: int) -> bool:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM companion_resources WHERE id = ?", (resource_id,))
+        return c.rowcount > 0
+
+
+Database.delete_companion_resource = db_delete_companion_resource
+
+
+def _calculate_risk_level(
+    elder_type: str,
+    mobility_level: str,
+    is_living_alone: bool,
+    missing_count: int
+) -> str:
+    score = 0
+    if elder_type in ("special_elder", "disabled", "low_income"):
+        score += 2
+    if mobility_level == "bedridden":
+        score += 3
+    elif mobility_level == "wheelchair":
+        score += 2
+    elif mobility_level == "need_assist":
+        score += 1
+    if is_living_alone:
+        score += 2
+    if missing_count >= 3:
+        score += 2
+    elif missing_count >= 1:
+        score += 1
+    if score >= 6:
+        return "critical"
+    elif score >= 4:
+        return "high"
+    elif score >= 2:
+        return "medium"
+    else:
+        return "low"
+
+
+def _calculate_match_priority(risk_level: str, is_living_alone: bool) -> int:
+    if risk_level == "critical":
+        return 1
+    elif risk_level == "high" or is_living_alone:
+        return 2
+    else:
+        return 3
+
+
+def _match_companions(
+    self,
+    community: str,
+    item_code: str,
+    expected_window: Optional[str],
+    risk_level: str,
+    expected_date: str,
+    limit: int = 5
+) -> List[MatchedCompanion]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT cr.*,
+                   (SELECT COUNT(*) FROM accompany_appointments aa
+                    WHERE aa.recommended_companion_id = cr.id
+                      AND aa.expected_date = ?
+                      AND aa.status NOT IN ('cancelled', 'no_show')) as daily_count
+            FROM companion_resources cr
+            WHERE cr.is_active = 1
+              AND cr.community = ?
+              AND (cr.eligible_items_json = '[]' OR cr.eligible_items_json LIKE ?)
+        """, (expected_date, community, f'%"{item_code}"%'))
+        candidates = []
+        for row in c.fetchall():
+            score = 0.0
+            reasons = []
+            cr_type = row["companion_type"]
+            if risk_level in ("high", "critical") and cr_type == "social_worker":
+                score += 30
+                reasons.append("社工资质适合高风险老人")
+            elif cr_type == "volunteer":
+                score += 15
+                reasons.append("社区志愿者")
+            elif cr_type == "family":
+                score += 20
+                reasons.append("家属陪同")
+            eligible = json.loads(row["eligible_items_json"]) if row["eligible_items_json"] else []
+            if item_code in eligible:
+                score += 25
+                reasons.append(f"具备{item_code}事项陪同经验")
+            windows = json.loads(row["available_windows_json"]) if row["available_windows_json"] else []
+            if expected_window and expected_window in windows:
+                score += 20
+                reasons.append(f"可服务于{expected_window}窗口")
+            elif not windows:
+                score += 10
+                reasons.append("无窗口限制")
+            daily_count = row["daily_count"] or 0
+            max_daily = row["max_daily_count"] or 3
+            if daily_count < max_daily:
+                score += 15
+                reasons.append(f"当日尚有{max_daily - daily_count}个服务名额")
+            else:
+                score -= 20
+                reasons.append("当日服务名额已满")
+            candidates.append({
+                "row": row,
+                "score": score,
+                "reasons": reasons
+            })
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        results = []
+        for idx, cand in enumerate(candidates[:limit]):
+            r = cand["row"]
+            results.append(MatchedCompanion(
+                companion_id=r["id"],
+                companion_name=r["name"],
+                companion_type=r["companion_type"],
+                phone=r["phone"],
+                community=r["community"],
+                match_priority=idx + 1,
+                match_score=round(cand["score"], 2),
+                match_reasons=cand["reasons"]
+            ))
+        return results
+
+
+Database._match_companions = _match_companions
+
+
+def _generate_material_reminders(
+    self,
+    missing_materials: List[Dict[str, Any]],
+    item_code: str
+) -> List[str]:
+    reminders = []
+    item = self.get_item(item_code)
+    if item:
+        all_mats = item.base_materials + item.agent_required_materials
+        for m in all_mats:
+            if m.required:
+                reminders.append(f"请务必携带：{m.name}" + (f"（需原件{m.need_original and '、复印件×' + str(m.need_copy) if m.need_copy > 0 else ''}）" if m.need_original or m.need_copy > 0 else ""))
+    for mm in missing_materials:
+        reminders.append(f"注意：上次预审缺件【{mm.get('name', '未知材料')}】，请务必补齐")
+    if not reminders:
+        reminders.append("请携带身份证等基础证件前往")
+    return reminders
+
+
+Database._generate_material_reminders = _generate_material_reminders
+
+
+def _generate_route_hints(self, community: str, expected_window: Optional[str]) -> List[str]:
+    hints = [
+        f"从{community}出发，建议提前30分钟到达服务中心",
+        "请携带老年卡或身份证以便取号排队"
+    ]
+    if expected_window:
+        window_names = {
+            "medical_window": "医保窗口",
+            "social_security_window": "社保窗口",
+            "banking_window": "银行窗口",
+            "civil_affairs_window": "民政窗口",
+            "comprehensive_window": "综合窗口",
+            "registration_window": "登记窗口"
+        }
+        hints.append(f"办理窗口：{window_names.get(expected_window, expected_window)}，位于服务大厅一层")
+    hints.append("服务中心配备无障碍通道和轮椅租借服务")
+    return hints
+
+
+Database._generate_route_hints = _generate_route_hints
+
+
+def _generate_risk_alerts(
+    self,
+    risk_level: str,
+    mobility_level: str,
+    is_living_alone: bool,
+    missing_count: int
+) -> List[str]:
+    alerts = []
+    if risk_level == "critical":
+        alerts.append("【紧急】该老人为极高风险人群，需安排专业社工陪同")
+    elif risk_level == "high":
+        alerts.append("【重要】该老人为高风险人群，建议优先派单")
+    if mobility_level == "bedridden":
+        alerts.append("老人卧床，需安排上门接送服务")
+    elif mobility_level == "wheelchair":
+        alerts.append("老人使用轮椅，需安排无障碍路线和志愿者协助")
+    elif mobility_level == "need_assist":
+        alerts.append("老人行动不便，需有人搀扶协助")
+    if is_living_alone:
+        alerts.append("老人独居，需特别关注其安全状态")
+    if missing_count > 0:
+        alerts.append(f"存在{missing_count}项缺件，需提醒老人或家属提前补齐材料")
+    return alerts
+
+
+Database._generate_risk_alerts = _generate_risk_alerts
+
+
+def db_create_accompany_appointment(
+    self,
+    data: Dict[str, Any]
+) -> Dict[str, Any]:
+    item = self.get_item(data["item_code"])
+    if not item:
+        raise ValueError(f"事项编码 {data['item_code']} 不存在")
+    item_name = item.item_name
+    missing_materials = []
+    missing_count = 0
+    if data.get("pre_review_order_id"):
+        pr_order = self.get_pre_review_order(data["pre_review_order_id"])
+        if pr_order:
+            missing_list = json.loads(pr_order.missing_list_json) if pr_order.missing_list_json else []
+            missing_materials = missing_list
+            missing_count = pr_order.total_missing
+    elif data.get("verify_history_id"):
+        hd = self.get_history_detail(data["verify_history_id"])
+        if hd:
+            missing_materials = hd.get("missing_details", [])
+            missing_count = len(missing_materials)
+    risk_level = _calculate_risk_level(
+        data["elder_type"].value if hasattr(data["elder_type"], "value") else data["elder_type"],
+        data["mobility_level"].value if hasattr(data["mobility_level"], "value") else data["mobility_level"],
+        data.get("is_living_alone", False),
+        missing_count
+    )
+    match_priority = _calculate_match_priority(risk_level, data.get("is_living_alone", False))
+    expected_window_val = data["expected_window"].value if data.get("expected_window") and hasattr(data["expected_window"], "value") else data.get("expected_window")
+    matched = self._match_companions(
+        community=data["community"],
+        item_code=data["item_code"],
+        expected_window=expected_window_val,
+        risk_level=risk_level,
+        expected_date=data["expected_date"]
+    )
+    primary = matched[0] if matched else None
+    material_reminders = self._generate_material_reminders(missing_materials, data["item_code"])
+    route_hints = self._generate_route_hints(data["community"], expected_window_val)
+    risk_alerts = self._generate_risk_alerts(
+        risk_level,
+        data["mobility_level"].value if hasattr(data["mobility_level"], "value") else data["mobility_level"],
+        data.get("is_living_alone", False),
+        missing_count
+    )
+    now = datetime.now()
+    appointment_no = _generate_appointment_no(now)
+    status = "matched" if primary else "pending_match"
+    expected_service_period = "上午 09:00-11:30"  # 默认时段
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO accompany_appointments
+            (appointment_no, elder_name, elder_type, item_code, item_name, mobility_level,
+             is_living_alone, accompany_demand_type, expected_date, community, contact_phone,
+             special_notes, pre_review_order_id, verify_history_id, expected_window,
+             status, risk_level, missing_materials_json, match_priority,
+             recommended_companion_id, recommended_companion_name, recommended_companion_type,
+             recommended_companion_phone, expected_service_period,
+             material_reminders_json, route_hints_json, risk_alerts_json,
+             confirm_status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            appointment_no,
+            data["elder_name"],
+            data["elder_type"].value if hasattr(data["elder_type"], "value") else data["elder_type"],
+            data["item_code"],
+            item_name,
+            data["mobility_level"].value if hasattr(data["mobility_level"], "value") else data["mobility_level"],
+            1 if data.get("is_living_alone") else 0,
+            data["accompany_demand_type"].value if hasattr(data["accompany_demand_type"], "value") else data["accompany_demand_type"],
+            data["expected_date"],
+            data["community"],
+            data["contact_phone"],
+            data.get("special_notes"),
+            data.get("pre_review_order_id"),
+            data.get("verify_history_id"),
+            expected_window_val,
+            status,
+            risk_level,
+            json.dumps(missing_materials, ensure_ascii=False),
+            match_priority,
+            primary.companion_id if primary else None,
+            primary.companion_name if primary else None,
+            primary.companion_type if primary else None,
+            primary.phone if primary else None,
+            expected_service_period,
+            json.dumps(material_reminders, ensure_ascii=False),
+            json.dumps(route_hints, ensure_ascii=False),
+            json.dumps(risk_alerts, ensure_ascii=False),
+            "unconfirmed",
+            now.isoformat(),
+            now.isoformat()
+        ))
+        new_id = c.lastrowid
+        for m in matched:
+            c.execute("""
+                INSERT INTO accompany_match_candidates
+                (appointment_id, companion_id, match_priority, match_score, match_reasons_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                new_id, m.companion_id, m.match_priority, m.match_score,
+                json.dumps(m.match_reasons, ensure_ascii=False),
+                now.isoformat()
+            ))
+        c.execute("""
+            INSERT INTO accompany_status_history
+            (appointment_id, appointment_no, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (new_id, appointment_no, None, status, "system", "预约创建并自动匹配", now.isoformat()))
+    appointment = self.get_accompany_appointment(new_id)
+    return {
+        "appointment": appointment,
+        "matched_candidates": matched
+    }
+
+
+Database.create_accompany_appointment = db_create_accompany_appointment
+
+
+def db_get_accompany_appointment(self, appointment_id: int) -> Optional[AccompanyAppointment]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM accompany_appointments WHERE id = ?", (appointment_id,))
+        row = c.fetchone()
+        return _row_to_accompany_appointment(row) if row else None
+
+
+Database.get_accompany_appointment = db_get_accompany_appointment
+
+
+def db_get_accompany_appointment_by_no(self, appointment_no: str) -> Optional[AccompanyAppointment]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM accompany_appointments WHERE appointment_no = ?", (appointment_no,))
+        row = c.fetchone()
+        return _row_to_accompany_appointment(row) if row else None
+
+
+Database.get_accompany_appointment_by_no = db_get_accompany_appointment_by_no
+
+
+def db_get_match_candidates(self, appointment_id: int) -> List[MatchedCompanion]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT mc.*, cr.name, cr.companion_type, cr.phone, cr.community
+            FROM accompany_match_candidates mc
+            JOIN companion_resources cr ON mc.companion_id = cr.id
+            WHERE mc.appointment_id = ?
+            ORDER BY mc.match_priority ASC
+        """, (appointment_id,))
+        results = []
+        for r in c.fetchall():
+            results.append(MatchedCompanion(
+                companion_id=r["companion_id"],
+                companion_name=r["name"],
+                companion_type=r["companion_type"],
+                phone=r["phone"],
+                community=r["community"],
+                match_priority=r["match_priority"],
+                match_score=r["match_score"],
+                match_reasons=json.loads(r["match_reasons_json"]) if r["match_reasons_json"] else []
+            ))
+        return results
+
+
+Database.get_match_candidates = db_get_match_candidates
+
+
+def db_list_accompany_appointments(
+    self,
+    community: Optional[str] = None,
+    item_code: Optional[str] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    expected_date: Optional[str] = None,
+    recommended_companion_id: Optional[int] = None,
+    risk_level: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20
+) -> Dict[str, Any]:
+    sql = "SELECT * FROM accompany_appointments WHERE 1=1"
+    count_sql = "SELECT COUNT(*) as cnt FROM accompany_appointments WHERE 1=1"
+    params = []
+    if community:
+        sql += " AND community = ?"
+        count_sql += " AND community = ?"
+        params.append(community)
+    if item_code:
+        sql += " AND item_code = ?"
+        count_sql += " AND item_code = ?"
+        params.append(item_code)
+    if status:
+        sql += " AND status = ?"
+        count_sql += " AND status = ?"
+        params.append(status)
+    if start_date:
+        sql += " AND date(created_at) >= date(?)"
+        count_sql += " AND date(created_at) >= date(?)"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date(created_at) <= date(?)"
+        count_sql += " AND date(created_at) <= date(?)"
+        params.append(end_date)
+    if expected_date:
+        sql += " AND expected_date = ?"
+        count_sql += " AND expected_date = ?"
+        params.append(expected_date)
+    if recommended_companion_id:
+        sql += " AND recommended_companion_id = ?"
+        count_sql += " AND recommended_companion_id = ?"
+        params.append(recommended_companion_id)
+    if risk_level:
+        sql += " AND risk_level = ?"
+        count_sql += " AND risk_level = ?"
+        params.append(risk_level)
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(count_sql, params)
+        total = c.fetchone()["cnt"] or 0
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        offset = (page - 1) * page_size
+        full_params = params + [page_size, offset]
+        c.execute(sql, full_params)
+        items = [_row_to_accompany_appointment(r) for r in c.fetchall()]
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+
+Database.list_accompany_appointments = db_list_accompany_appointments
+
+
+def db_reassign_appointment(
+    self,
+    appointment_id: int,
+    new_companion_id: int,
+    reassign_reason: str,
+    operator: str
+) -> Optional[AccompanyAppointment]:
+    existing = self.get_accompany_appointment(appointment_id)
+    if not existing:
+        return None
+    new_companion = self.get_companion_resource(new_companion_id)
+    if not new_companion:
+        raise ValueError(f"陪同人ID {new_companion_id} 不存在")
+    if not new_companion.is_active:
+        raise ValueError(f"陪同人 {new_companion.name} 已停用")
+    now = datetime.now()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE accompany_appointments
+            SET recommended_companion_id = ?,
+                recommended_companion_name = ?,
+                recommended_companion_type = ?,
+                recommended_companion_phone = ?,
+                status = 'reassigned',
+                confirm_status = 'unconfirmed',
+                updated_at = ?
+            WHERE id = ?
+        """, (
+            new_companion.id, new_companion.name, new_companion.companion_type,
+            new_companion.phone, now.isoformat(), appointment_id
+        ))
+        c.execute("""
+            INSERT INTO accompany_status_history
+            (appointment_id, appointment_no, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            appointment_id, existing.appointment_no, existing.status,
+            "reassigned", operator, f"改派原因：{reassign_reason}", now.isoformat()
+        ))
+    return self.get_accompany_appointment(appointment_id)
+
+
+Database.reassign_appointment = db_reassign_appointment
+
+
+def db_update_accompany_status(
+    self,
+    appointment_id: int,
+    status: str,
+    operator: Optional[str] = None,
+    remark: Optional[str] = None
+) -> Optional[AccompanyAppointment]:
+    existing = self.get_accompany_appointment(appointment_id)
+    if not existing:
+        return None
+    now = datetime.now()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE accompany_appointments
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+        """, (status, now.isoformat(), appointment_id))
+        c.execute("""
+            INSERT INTO accompany_status_history
+            (appointment_id, appointment_no, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            appointment_id, existing.appointment_no, existing.status,
+            status, operator, remark, now.isoformat()
+        ))
+    return self.get_accompany_appointment(appointment_id)
+
+
+Database.update_accompany_status = db_update_accompany_status
+
+
+def db_cancel_appointment(
+    self,
+    appointment_id: int,
+    cancel_reason: str,
+    cancel_remark: Optional[str] = None,
+    operator: Optional[str] = None
+) -> Optional[AccompanyAppointment]:
+    existing = self.get_accompany_appointment(appointment_id)
+    if not existing:
+        return None
+    now = datetime.now()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE accompany_appointments
+            SET status = 'cancelled',
+                cancel_reason = ?,
+                cancel_remark = ?,
+                updated_at = ?
+            WHERE id = ?
+        """, (cancel_reason, cancel_remark, now.isoformat(), appointment_id))
+        c.execute("""
+            INSERT INTO accompany_status_history
+            (appointment_id, appointment_no, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            appointment_id, existing.appointment_no, existing.status,
+            "cancelled", operator,
+            f"取消原因：{cancel_reason}" + (f" - {cancel_remark}" if cancel_remark else ""),
+            now.isoformat()
+        ))
+    return self.get_accompany_appointment(appointment_id)
+
+
+Database.cancel_appointment = db_cancel_appointment
+
+
+def db_get_appointment_status_history(self, appointment_id: int) -> List[Dict[str, Any]]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM accompany_status_history
+            WHERE appointment_id = ?
+            ORDER BY created_at ASC
+        """, (appointment_id,))
+        records = []
+        for r in c.fetchall():
+            records.append({
+                "id": r["id"],
+                "appointment_id": r["appointment_id"],
+                "appointment_no": r["appointment_no"],
+                "from_status": r["from_status"],
+                "to_status": r["to_status"],
+                "operator": r["operator"],
+                "remark": r["remark"],
+                "created_at": r["created_at"]
+            })
+        return records
+
+
+Database.get_appointment_status_history = db_get_appointment_status_history
+
+
+def db_create_follow_up(self, data: Dict[str, Any]) -> AccompanyFollowUpRecord:
+    appointment = self.get_accompany_appointment(data["appointment_id"])
+    if not appointment:
+        raise ValueError(f"陪同预约ID {data['appointment_id']} 不存在")
+    now = datetime.now()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO accompany_follow_ups
+            (appointment_id, appointment_no, is_companion_arrived, is_elder_satisfied,
+             materials_completed, failed_materials_json, service_duration_minutes,
+             issues_json, suggestions, follower, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            data["appointment_id"],
+            appointment.appointment_no,
+            1 if data.get("is_companion_arrived") else 0,
+            1 if data.get("is_elder_satisfied") else 0,
+            1 if data.get("materials_completed") else 0,
+            json.dumps(data.get("failed_materials", []), ensure_ascii=False),
+            data.get("service_duration_minutes", 0),
+            json.dumps(data.get("issues", []), ensure_ascii=False),
+            data.get("suggestions"),
+            data["follower"],
+            now.isoformat()
+        ))
+        new_id = c.lastrowid
+        if data.get("is_elder_satisfied"):
+            c.execute("""
+                UPDATE accompany_appointments
+                SET status = 'completed', updated_at = ?
+                WHERE id = ?
+            """, (now.isoformat(), data["appointment_id"]))
+            c.execute("""
+                INSERT INTO accompany_status_history
+                (appointment_id, appointment_no, from_status, to_status, operator, remark, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data["appointment_id"], appointment.appointment_no, appointment.status,
+                "completed", data["follower"], "回访完成，服务结束", now.isoformat()
+            ))
+        c.execute("SELECT * FROM accompany_follow_ups WHERE id = ?", (new_id,))
+        return _row_to_follow_up(c.fetchone())
+
+
+Database.create_follow_up = db_create_follow_up
+
+
+def db_get_follow_ups_by_appointment(self, appointment_id: int) -> List[AccompanyFollowUpRecord]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM accompany_follow_ups
+            WHERE appointment_id = ?
+            ORDER BY created_at DESC
+        """, (appointment_id,))
+        return [_row_to_follow_up(r) for r in c.fetchall()]
+
+
+Database.get_follow_ups_by_appointment = db_get_follow_ups_by_appointment
+
+
+def db_get_accompany_stats(
+    self,
+    community: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> Dict[str, Any]:
+    base_sql = "SELECT * FROM accompany_appointments WHERE 1=1"
+    params = []
+    if community:
+        base_sql += " AND community = ?"
+        params.append(community)
+    if start_date:
+        base_sql += " AND date(created_at) >= date(?)"
+        params.append(start_date)
+    if end_date:
+        base_sql += " AND date(created_at) <= date(?)"
+        params.append(end_date)
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as total"), params)
+        total_appointments = c.fetchone()["total"] or 0
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND status = 'completed'", params)
+        completed_count = c.fetchone()["cnt"] or 0
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND status = 'no_show'", params)
+        no_show_count = c.fetchone()["cnt"] or 0
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND status = 'cancelled'", params)
+        cancelled_count = c.fetchone()["cnt"] or 0
+        fu_sql = """
+            SELECT AVG(fu.service_duration_minutes) as avg_dur,
+                   SUM(CASE WHEN fu.is_elder_satisfied = 1 THEN 1 ELSE 0 END) as sat_cnt,
+                   COUNT(fu.id) as fu_total
+            FROM accompany_follow_ups fu
+            JOIN accompany_appointments aa ON fu.appointment_id = aa.id
+            WHERE 1=1
+        """
+        fu_params = []
+        if community:
+            fu_sql += " AND aa.community = ?"
+            fu_params.append(community)
+        if start_date:
+            fu_sql += " AND date(aa.created_at) >= date(?)"
+            fu_params.append(start_date)
+        if end_date:
+            fu_sql += " AND date(aa.created_at) <= date(?)"
+            fu_params.append(end_date)
+        c.execute(fu_sql, fu_params)
+        fu_row = c.fetchone()
+        avg_duration = round(fu_row["avg_dur"] or 0.0, 2)
+        fu_total = fu_row["fu_total"] or 0
+        sat_cnt = fu_row["sat_cnt"] or 0
+        satisfaction_rate = round(sat_cnt / fu_total, 4) if fu_total > 0 else 0.0
+        comm_sql = """
+            SELECT aa.community,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN aa.status = 'completed' THEN 1 ELSE 0 END) as completed_cnt,
+                   SUM(CASE WHEN aa.status = 'no_show' THEN 1 ELSE 0 END) as no_show_cnt
+            FROM accompany_appointments aa
+            WHERE 1=1
+        """
+        comm_params = []
+        if start_date:
+            comm_sql += " AND date(aa.created_at) >= date(?)"
+            comm_params.append(start_date)
+        if end_date:
+            comm_sql += " AND date(aa.created_at) <= date(?)"
+            comm_params.append(end_date)
+        comm_sql += " GROUP BY aa.community ORDER BY total DESC"
+        c.execute(comm_sql, comm_params)
+        community_stats = []
+        for r in c.fetchall():
+            total = r["total"] or 0
+            cc = r["completed_cnt"] or 0
+            ns = r["no_show_cnt"] or 0
+            community_stats.append(AccompanyStatsCommunity(
+                community=r["community"],
+                total_appointments=total,
+                completed_count=cc,
+                completion_rate=round(cc / total, 4) if total > 0 else 0.0,
+                no_show_count=ns,
+                no_show_rate=round(ns / total, 4) if total > 0 else 0.0
+            ))
+        risk_sql = """
+            SELECT aa.community,
+                   COUNT(DISTINCT CASE WHEN aa.risk_level IN ('high', 'critical') THEN aa.elder_name || aa.contact_phone END) as high_risk_cnt,
+                   SUM(CASE WHEN aa.risk_level IN ('high', 'critical') AND aa.status = 'completed' THEN 1 ELSE 0 END) as accompanied_cnt
+            FROM accompany_appointments aa
+            WHERE 1=1
+        """
+        risk_params = []
+        if start_date:
+            risk_sql += " AND date(aa.created_at) >= date(?)"
+            risk_params.append(start_date)
+        if end_date:
+            risk_sql += " AND date(aa.created_at) <= date(?)"
+            risk_params.append(end_date)
+        risk_sql += " GROUP BY aa.community"
+        c.execute(risk_sql, risk_params)
+        risk_coverage_stats = []
+        for r in c.fetchall():
+            hr = r["high_risk_cnt"] or 0
+            ac = r["accompanied_cnt"] or 0
+            risk_coverage_stats.append(AccompanyStatsRiskCoverage(
+                community=r["community"],
+                high_risk_elder_count=hr,
+                accompanied_count=ac,
+                coverage_rate=round(ac / hr, 4) if hr > 0 else 0.0
+            ))
+        workload_sql = """
+            SELECT aa.recommended_companion_id as cid,
+                   cr.name, cr.companion_type, cr.community,
+                   COUNT(*) as total_services,
+                   AVG(fu.service_duration_minutes) as avg_dur
+            FROM accompany_appointments aa
+            JOIN companion_resources cr ON aa.recommended_companion_id = cr.id
+            LEFT JOIN accompany_follow_ups fu ON aa.id = fu.appointment_id
+            WHERE aa.status = 'completed'
+        """
+        wl_params = []
+        if community:
+            workload_sql += " AND aa.community = ?"
+            wl_params.append(community)
+        if start_date:
+            workload_sql += " AND date(aa.created_at) >= date(?)"
+            wl_params.append(start_date)
+        if end_date:
+            workload_sql += " AND date(aa.created_at) <= date(?)"
+            wl_params.append(end_date)
+        workload_sql += " GROUP BY aa.recommended_companion_id ORDER BY total_services DESC LIMIT 20"
+        c.execute(workload_sql, wl_params)
+        companion_workload_ranking = []
+        for r in c.fetchall():
+            companion_workload_ranking.append(AccompanyStatsCompanionWorkload(
+                companion_id=r["cid"],
+                companion_name=r["name"],
+                companion_type=r["companion_type"],
+                community=r["community"],
+                total_services=r["total_services"] or 0,
+                avg_duration_minutes=round(r["avg_dur"] or 0.0, 2)
+            ))
+        mat_sql = """
+            SELECT value as mat_name, COUNT(*) as fail_cnt
+            FROM accompany_follow_ups,
+                 json_each(accompany_follow_ups.failed_materials_json)
+            WHERE accompany_follow_ups.materials_completed = 0
+        """
+        mat_params = []
+        if start_date or end_date:
+            mat_sql += " AND accompany_follow_ups.appointment_id IN (SELECT id FROM accompany_appointments WHERE 1=1"
+            if start_date:
+                mat_sql += " AND date(created_at) >= date(?)"
+                mat_params.append(start_date)
+            if end_date:
+                mat_sql += " AND date(created_at) <= date(?)"
+                mat_params.append(end_date)
+            mat_sql += ")"
+        mat_sql += " GROUP BY value ORDER BY fail_cnt DESC LIMIT 20"
+        c.execute(mat_sql, mat_params)
+        material_failure_ranking = []
+        rank = 0
+        for r in c.fetchall():
+            rank += 1
+            material_failure_ranking.append(AccompanyStatsMaterialFailure(
+                material_name=r["mat_name"],
+                failure_count=r["fail_cnt"] or 0,
+                rank=rank
+            ))
+    overall = AccompanyStatsOverall(
+        total_appointments=total_appointments,
+        completed_count=completed_count,
+        completion_rate=round(completed_count / total_appointments, 4) if total_appointments > 0 else 0.0,
+        no_show_count=no_show_count,
+        no_show_rate=round(no_show_count / total_appointments, 4) if total_appointments > 0 else 0.0,
+        cancelled_count=cancelled_count,
+        avg_service_duration_minutes=avg_duration,
+        satisfaction_rate=satisfaction_rate,
+        community_stats=community_stats,
+        risk_coverage_stats=risk_coverage_stats,
+        companion_workload_ranking=companion_workload_ranking,
+        material_failure_ranking=material_failure_ranking
+    )
+    return overall.model_dump(mode="json")
+
+
+Database.get_accompany_stats = db_get_accompany_stats
