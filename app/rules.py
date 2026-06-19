@@ -377,6 +377,15 @@ MATERIAL_LABELS: Dict[MaterialCategory, str] = {
 }
 
 
+ELDER_TYPE_LABELS: Dict[ElderType, str] = {
+    ElderType.LOCAL_RESIDENT: "本地居民",
+    ElderType.REMOTE_RESIDENT: "异地居住",
+    ElderType.SPECIAL_ELDER: "高龄独居",
+    ElderType.DISABLED: "残疾",
+    ElderType.LOW_INCOME: "低保",
+}
+
+
 class RuleEngine:
     """规则引擎：负责事项规则匹配、材料校验、缺件判断、代办关系判断"""
 
@@ -408,7 +417,7 @@ class RuleEngine:
                 if note.extra_materials:
                     all_materials.extend(note.extra_materials)
                     names = "、".join([m.name for m in note.extra_materials])
-                    supplement_notes.append(f"【特殊人群附加材料】{MATERIAL_LABELS.get(elder_type, elder_type.value)}老人需额外准备：{names}")
+                    supplement_notes.append(f"【特殊人群附加材料】{ELDER_TYPE_LABELS.get(elder_type, elder_type.value)}老人需额外准备：{names}")
 
         if is_agent and item.agent_required_materials:
             all_materials.extend(item.agent_required_materials)
@@ -448,20 +457,33 @@ class RuleEngine:
                 submitted_by_category[sm.category] = []
             submitted_by_category[sm.category].append(sm)
 
+        used_submitted_ids: set = set()
         missing_list: List[MissingDetail] = []
         total_required = 0
+
+        def _find_match(req: MaterialSpec) -> Optional[SubmittedMaterial]:
+            candidates = submitted_by_category.get(req.category, [])
+            for idx, cand in enumerate(candidates):
+                cand_id = (req.category, idx)
+                if cand_id in used_submitted_ids:
+                    continue
+                if cand.name == req.name:
+                    used_submitted_ids.add(cand_id)
+                    return cand
+            for idx, cand in enumerate(candidates):
+                cand_id = (req.category, idx)
+                if cand_id in used_submitted_ids:
+                    continue
+                used_submitted_ids.add(cand_id)
+                return cand
+            return None
 
         for req in required_materials:
             if not req.required:
                 continue
             total_required += 1
 
-            candidates = submitted_by_category.get(req.category, [])
-            matched = None
-            for cand in candidates:
-                if cand.name == req.name or cand.category == req.category:
-                    matched = cand
-                    break
+            matched = _find_match(req)
 
             if matched is None:
                 missing_list.append(MissingDetail(
