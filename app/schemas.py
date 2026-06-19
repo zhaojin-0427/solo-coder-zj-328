@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 
 
@@ -52,6 +52,32 @@ class PhotoSpec(str, Enum):
     WHITE_BG = "white_bg"
     COLORED = "colored"
     DIGITAL = "digital"
+
+
+class PreReviewStatus(str, Enum):
+    PENDING = "pending"
+    IN_REVIEW = "in_review"
+    SUPPLEMENTING = "supplementing"
+    PASSED = "passed"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    COMPLETED = "completed"
+
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class ServiceWindow(str, Enum):
+    MEDICAL_WINDOW = "medical_window"
+    SOCIAL_SECURITY_WINDOW = "social_security_window"
+    BANKING_WINDOW = "banking_window"
+    CIVIL_AFFAIRS_WINDOW = "civil_affairs_window"
+    COMPREHENSIVE_WINDOW = "comprehensive_window"
+    REGISTRATION_WINDOW = "registration_window"
 
 
 class UniformResponse(BaseModel):
@@ -193,3 +219,149 @@ class StatsOverall(BaseModel):
     top_items: List[StatsItemMissRate] = []
     top_materials: List[StatsTopErrorMaterial] = []
     agent_distribution: List[StatsAgentDistribution] = []
+
+
+class PreReviewSubmitRequest(BaseModel):
+    item_code: str
+    elder_type: ElderType
+    elder_id_card: str = Field(..., min_length=8, max_length=20, description="老人身份证号/身份标识")
+    elder_name: str = Field(..., min_length=1, max_length=50, description="老人姓名")
+    is_agent: bool = False
+    agent_relation: Optional[AgentRelation] = None
+    agent_name: Optional[str] = None
+    contact_phone: str = Field(..., pattern=r"^1[3-9]\d{9}$", description="联系电话")
+    submitted_materials: List[SubmittedMaterial] = []
+    expected_window: Optional[ServiceWindow] = None
+    appointment_date: Optional[str] = Field(None, description="预约办理日期 YYYY-MM-DD")
+    remarks: Optional[str] = None
+
+
+class MaterialCheckSummaryItem(BaseModel):
+    category: str
+    name: str
+    required: bool
+    status: str
+    note: str
+    has_original: bool
+    copy_count: int
+    required_copy_count: int
+
+
+class PrintableCheckSummary(BaseModel):
+    work_order_no: str
+    elder_name: str
+    item_name: str
+    appointment_date: Optional[str]
+    expected_window: Optional[str]
+    risk_level: str
+    total_required: int
+    total_ready: int
+    total_missing: int
+    materials: List[MaterialCheckSummaryItem]
+    deadline: str
+    contact_phone: str
+    generated_at: str
+
+
+class PreReviewWorkOrder(BaseModel):
+    id: int
+    work_order_no: str
+    item_code: str
+    item_name: str
+    elder_type: str
+    elder_id_card: str
+    elder_name: str
+    is_agent: bool
+    agent_relation: Optional[str]
+    agent_name: Optional[str]
+    contact_phone: str
+    expected_window: Optional[str]
+    appointment_date: Optional[str]
+    remarks: Optional[str]
+    status: str
+    risk_level: str
+    is_pass: bool
+    total_required: int
+    total_missing: int
+    total_ready: int
+    one_time_notice: str
+    suggestion_deadline: datetime
+    window_notes: List[str]
+    missing_list_json: str
+    ready_materials_json: str
+    check_summary_json: str
+    is_duplicate: bool
+    linked_original_id: Optional[int]
+    review_count: int
+    supplement_count: int
+    created_at: datetime
+    updated_at: datetime
+    reviewer: Optional[str]
+    reviewed_at: Optional[datetime]
+
+
+class PreReviewWorkOrderDetail(BaseModel):
+    order: PreReviewWorkOrder
+    missing_list: List[Dict[str, Any]]
+    ready_materials: List[Dict[str, Any]]
+    check_summary: PrintableCheckSummary
+    linked_orders: List[Dict[str, Any]]
+    supplement_progress: Dict[str, Any]
+    repeated_missing_reasons: List[Dict[str, Any]]
+    notice_records: List[Dict[str, Any]]
+
+
+class PreReviewListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[PreReviewWorkOrder]
+
+
+class PreReviewStatusUpdateRequest(BaseModel):
+    status: PreReviewStatus
+    reviewer: Optional[str] = None
+    review_remark: Optional[str] = None
+
+
+class SupplementReviewRequest(BaseModel):
+    work_order_id: int
+    reviewer: str = Field(..., description="复核人")
+    supplemented_materials: List[SubmittedMaterial] = []
+    review_result: bool = Field(..., description="复核结果: True-补齐通过, False-仍有缺件")
+    review_remark: Optional[str] = None
+
+
+class OneTimeNoticeRecord(BaseModel):
+    id: int
+    work_order_id: int
+    work_order_no: str
+    notice_type: str
+    notice_content: str
+    notice_method: str
+    notified_to: str
+    notified_phone: str
+    created_at: datetime
+
+
+class PreReviewStats(BaseModel):
+    total_orders: int
+    pass_count: int
+    pass_rate: float
+    duplicate_count: int
+    duplicate_rate: float
+    avg_missing_count: float
+    expired_count: int
+    supplement_in_progress_count: int
+    item_avg_missing: List[Dict[str, Any]]
+    top_return_material_combos: List[Dict[str, Any]]
+    window_pass_rates: List[Dict[str, Any]]
+
+
+class PreReviewNoticeQuery(BaseModel):
+    work_order_id: Optional[int] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    notice_method: Optional[str] = None
+    limit: int = 50
+    offset: int = 0
