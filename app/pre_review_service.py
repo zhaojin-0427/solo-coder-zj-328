@@ -490,7 +490,7 @@ class PreReviewService:
             PreReviewStatus.PENDING.value if not is_duplicate else PreReviewStatus.SUPPLEMENTING.value
         )
 
-        total_ready = max(0, verify_result.total_required - verify_result.total_missing)
+        total_ready = len(ready_materials)
 
         dummy_no = "TMP_" + datetime.now().strftime("%Y%m%d%H%M%S")
         check_summary = _build_check_summary(
@@ -614,9 +614,27 @@ class PreReviewService:
         item = self.db.get_item(order.item_code)
         missing_before = order.total_missing
 
+        original_ready_materials = json.loads(order.ready_materials_json) if order.ready_materials_json else []
+
         if supplemented and item:
             from .schemas import SubmittedMaterial as SM
             submats = [SM(**m) if isinstance(m, dict) else m for m in supplemented]
+
+            merged_submitted = []
+            seen_keys = set()
+            for rm in original_ready_materials:
+                key = (rm.get("category"), rm.get("name"))
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    try:
+                        merged_submitted.append(SM(**rm))
+                    except Exception:
+                        pass
+            for sm in submats:
+                key = (sm.category, sm.name)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    merged_submitted.append(sm)
 
             try:
                 verify_result = self.engine.validate_materials(
@@ -624,28 +642,41 @@ class PreReviewService:
                     elder_type=ElderType(order.elder_type),
                     is_agent=order.is_agent,
                     agent_relation=AgentRelation(order.agent_relation) if order.agent_relation else None,
-                    submitted=submats
+                    submitted=merged_submitted
                 )
                 missing_after = verify_result.total_missing
                 is_pass_new = verify_result.is_pass
                 missing_list_new = [m.model_dump(mode="json") for m in verify_result.missing_list]
-                total_ready_new = max(0, verify_result.total_required - verify_result.total_missing)
+                ready_materials_new = _collect_ready_materials(
+                    self.engine.get_required_materials(
+                        item_code=order.item_code,
+                        elder_type=ElderType(order.elder_type),
+                        is_agent=order.is_agent,
+                        agent_relation=AgentRelation(order.agent_relation) if order.agent_relation else None
+                    )[0],
+                    merged_submitted,
+                    verify_result.missing_list
+                )
+                total_ready_new = len(ready_materials_new)
             except Exception:
                 missing_after = max(0, missing_before - len(supplemented))
                 is_pass_new = missing_after == 0
                 missing_list_new = json.loads(order.missing_list_json)
                 total_ready_new = order.total_ready
+                ready_materials_new = original_ready_materials
         else:
             missing_after = 0 if review_result else max(0, missing_before - 1)
             is_pass_new = review_result
             missing_list_new = [] if review_result else json.loads(order.missing_list_json)
             total_ready_new = order.total_required if review_result else order.total_ready
+            ready_materials_new = original_ready_materials
 
         updates = {
             "total_missing": missing_after,
             "total_ready": total_ready_new,
             "is_pass": is_pass_new,
             "missing_list": missing_list_new,
+            "ready_materials": ready_materials_new,
         }
 
         if is_pass_new:

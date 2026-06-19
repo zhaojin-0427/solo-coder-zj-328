@@ -72,6 +72,7 @@ def list_pre_review_orders(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量")
 ):
+    _db.mark_expired_orders()
     result = _db.list_pre_review_orders(
         item_code=item_code,
         expected_window=expected_window.value if expected_window else None,
@@ -96,6 +97,7 @@ def list_pre_review_orders(
 
 @router.get("/{order_id}", response_model=UniformResponse, summary="获取预审工单详情")
 def get_pre_review_detail(order_id: int):
+    _db.mark_expired_orders()
     detail = _service.get_order_detail(order_id)
     if not detail:
         raise HTTPException(status_code=404, detail=f"预审工单ID {order_id} 不存在")

@@ -1023,6 +1023,23 @@ def db_get_linked_orders(self, elder_id_card: Optional[str] = None, contact_phon
 Database.get_linked_orders = db_get_linked_orders
 
 
+def db_mark_expired_orders(self) -> int:
+    now_iso = datetime.now().isoformat()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE pre_review_orders
+            SET status = 'expired', updated_at = ?
+            WHERE status NOT IN ('passed', 'completed', 'expired', 'rejected')
+              AND is_pass = 0
+              AND suggestion_deadline < ?
+        """, (now_iso, now_iso))
+        return c.rowcount
+
+
+Database.mark_expired_orders = db_mark_expired_orders
+
+
 def db_get_pre_review_stats(
     self,
     item_code: Optional[str] = None,
@@ -1030,6 +1047,9 @@ def db_get_pre_review_stats(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ) -> Dict[str, Any]:
+    self.mark_expired_orders()
+
+    now_iso = datetime.now().isoformat()
     base_sql = "SELECT COUNT(*) as total FROM pre_review_orders WHERE 1=1"
     params = []
     if item_code:
@@ -1061,8 +1081,9 @@ def db_get_pre_review_stats(
         c.execute(avg_sql, params)
         avg_missing = round(c.fetchone()["avg_miss"] or 0.0, 2)
 
-        exp_sql = base_sql.replace("COUNT(*) as total", "COUNT(*) as exp_cnt") + " AND status = 'expired'"
-        c.execute(exp_sql, params)
+        exp_sql = base_sql.replace("COUNT(*) as total", "COUNT(*) as exp_cnt") + " AND is_pass = 0 AND suggestion_deadline < ?"
+        exp_params = params + [now_iso]
+        c.execute(exp_sql, exp_params)
         expired_count = c.fetchone()["exp_cnt"] or 0
 
         supp_sql = base_sql.replace("COUNT(*) as total", "COUNT(*) as supp_cnt") + " AND status IN ('supplementing','pending') AND supplement_count > 0"
