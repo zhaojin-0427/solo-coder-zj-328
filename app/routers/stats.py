@@ -220,3 +220,189 @@ def get_top_return_material_combos(
         )
     }
     return ok(data=data, message="最常导致退回的材料组合排行")
+
+
+@router.get("/exceptions/overall", response_model=UniformResponse, summary="办事过程异常综合统计")
+def get_exception_overall_stats(
+    item_code: Optional[str] = Query(None, description="指定事项编码，留空为全部"),
+    community: Optional[str] = Query(None, description="指定社区，留空为全部"),
+    expected_window: Optional[ServiceWindow] = Query(None, description="指定窗口，留空为全部"),
+    start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD")
+):
+    stats = _db.get_exception_stats(
+        item_code=item_code,
+        community=community,
+        expected_window=expected_window.value if expected_window else None,
+        start_date=start_date,
+        end_date=end_date
+    )
+    return ok(data=stats, message="办事过程异常综合统计数据")
+
+
+@router.get("/exceptions/rate", response_model=UniformResponse, summary="异常发生率统计")
+def get_exception_rate(
+    item_code: Optional[str] = Query(None, description="指定事项编码"),
+    community: Optional[str] = Query(None, description="指定社区"),
+    expected_window: Optional[ServiceWindow] = Query(None, description="指定窗口"),
+    start_date: Optional[str] = Query(None, description="起始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期")
+):
+    stats = _db.get_exception_stats(
+        item_code=item_code,
+        community=community,
+        expected_window=expected_window.value if expected_window else None,
+        start_date=start_date,
+        end_date=end_date
+    )
+    interpretation = ""
+    rate = stats["exception_rate"]
+    if rate >= 0.1:
+        interpretation = f"异常发生率偏高（{round(rate * 100, 2)}%），建议加强办事前预审和材料检查工作。"
+    elif rate >= 0.05:
+        interpretation = f"异常发生率中等（{round(rate * 100, 2)}%），存在一定改进空间。"
+    else:
+        interpretation = f"异常发生率较低（{round(rate * 100, 2)}%），整体运行状况良好。"
+    data = {
+        "total_exceptions": stats["total_exceptions"],
+        "exception_rate": rate,
+        "exception_rate_percent": f"{round(rate * 100, 2)}%",
+        "accompany_exception_count": stats["accompany_exception_count"],
+        "accompany_total": stats["accompany_total"],
+        "accompany_exception_rate": stats["accompany_exception_rate"],
+        "accompany_exception_rate_percent": f"{round(stats['accompany_exception_rate'] * 100, 2)}%",
+        "interpretation": interpretation
+    }
+    return ok(data=data, message="异常发生率统计")
+
+
+@router.get("/exceptions/item-ranking", response_model=UniformResponse, summary="各事项异常排行")
+def get_exception_item_ranking(
+    community: Optional[str] = Query(None, description="指定社区"),
+    expected_window: Optional[ServiceWindow] = Query(None, description="指定窗口"),
+    start_date: Optional[str] = Query(None, description="起始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期"),
+    limit: int = Query(20, ge=1, le=50, description="返回TOP N")
+):
+    stats = _db.get_exception_stats(
+        community=community,
+        expected_window=expected_window.value if expected_window else None,
+        start_date=start_date,
+        end_date=end_date
+    )
+    ranking = stats["item_exception_ranking"][:limit]
+    data = {
+        "total_exception_items": len(ranking),
+        "ranking": ranking
+    }
+    return ok(data=data, message="各事项异常排行")
+
+
+@router.get("/exceptions/timeout-summary", response_model=UniformResponse, summary="超时未处理异常统计")
+def get_exception_timeout_summary(
+    item_code: Optional[str] = Query(None, description="指定事项编码"),
+    community: Optional[str] = Query(None, description="指定社区"),
+    expected_window: Optional[ServiceWindow] = Query(None, description="指定窗口"),
+    start_date: Optional[str] = Query(None, description="起始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期")
+):
+    stats = _db.get_exception_stats(
+        item_code=item_code,
+        community=community,
+        expected_window=expected_window.value if expected_window else None,
+        start_date=start_date,
+        end_date=end_date
+    )
+    data = {
+        "total_exceptions": stats["total_exceptions"],
+        "pending_count": stats["pending_count"],
+        "in_progress_count": stats["in_progress_count"],
+        "timeout_count": stats["timeout_count"],
+        "timeout_rate": stats["timeout_rate"],
+        "timeout_rate_percent": f"{round(stats['timeout_rate'] * 100, 2)}%",
+        "interpretation": (
+            f"超时未处理异常共{stats['timeout_count']}个，"
+            f"当前待处理{stats['pending_count']}个、处理中{stats['in_progress_count']}个，"
+            + ("建议对超时异常进行紧急督办。" if stats["timeout_count"] > 0 else "无超时异常，处置效率良好。")
+        )
+    }
+    return ok(data=data, message="超时未处理异常统计")
+
+
+@router.get("/exceptions/avg-duration", response_model=UniformResponse, summary="不同异常类型平均处理时长")
+def get_exception_avg_duration(
+    item_code: Optional[str] = Query(None, description="指定事项编码"),
+    community: Optional[str] = Query(None, description="指定社区"),
+    expected_window: Optional[ServiceWindow] = Query(None, description="指定窗口"),
+    start_date: Optional[str] = Query(None, description="起始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期")
+):
+    stats = _db.get_exception_stats(
+        item_code=item_code,
+        community=community,
+        expected_window=expected_window.value if expected_window else None,
+        start_date=start_date,
+        end_date=end_date
+    )
+    data = {
+        "type_avg_duration": stats["type_avg_duration"]
+    }
+    return ok(data=data, message="不同异常类型平均处理时长")
+
+
+@router.get("/exceptions/top-failure-reasons", response_model=UniformResponse, summary="导致办事失败的高频原因排行")
+def get_exception_top_failure_reasons(
+    item_code: Optional[str] = Query(None, description="指定事项编码"),
+    community: Optional[str] = Query(None, description="指定社区"),
+    expected_window: Optional[ServiceWindow] = Query(None, description="指定窗口"),
+    start_date: Optional[str] = Query(None, description="起始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期"),
+    limit: int = Query(10, ge=1, le=20, description="返回TOP N")
+):
+    stats = _db.get_exception_stats(
+        item_code=item_code,
+        community=community,
+        expected_window=expected_window.value if expected_window else None,
+        start_date=start_date,
+        end_date=end_date
+    )
+    reasons = stats["top_failure_reasons"][:limit]
+    total_failures = sum(r["count"] for r in reasons)
+    data = {
+        "total_impacted_failures": total_failures,
+        "top_reasons": reasons,
+        "interpretation": (
+            f"前{len(reasons)}类异常共导致{total_failures}次办事受影响，"
+            + ("建议针对高频原因制定专项改进措施。" if reasons else "暂无影响办事完成的异常数据。")
+        )
+    }
+    return ok(data=data, message="导致办事失败的高频原因排行")
+
+
+@router.get("/exceptions/accompany-rate", response_model=UniformResponse, summary="陪同预约关联异常率统计")
+def get_exception_accompany_rate(
+    community: Optional[str] = Query(None, description="指定社区"),
+    start_date: Optional[str] = Query(None, description="起始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期")
+):
+    stats = _db.get_exception_stats(
+        community=community,
+        start_date=start_date,
+        end_date=end_date
+    )
+    rate = stats["accompany_exception_rate"]
+    interpretation = ""
+    if rate >= 0.15:
+        interpretation = f"陪同预约关联异常率偏高（{round(rate * 100, 2)}%），建议加强陪同资源调度和事前准备工作。"
+    elif rate >= 0.08:
+        interpretation = f"陪同预约关联异常率中等（{round(rate * 100, 2)}%），存在一定改进空间。"
+    else:
+        interpretation = f"陪同预约关联异常率较低（{round(rate * 100, 2)}%），陪同服务整体运行良好。"
+    data = {
+        "accompany_total": stats["accompany_total"],
+        "accompany_exception_count": stats["accompany_exception_count"],
+        "accompany_exception_rate": rate,
+        "accompany_exception_rate_percent": f"{round(rate * 100, 2)}%",
+        "interpretation": interpretation
+    }
+    return ok(data=data, message="陪同预约关联异常率统计")

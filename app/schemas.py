@@ -611,3 +611,195 @@ class AccompanyStatsOverall(BaseModel):
     risk_coverage_stats: List[AccompanyStatsRiskCoverage]
     companion_workload_ranking: List[AccompanyStatsCompanionWorkload]
     material_failure_ranking: List[AccompanyStatsMaterialFailure]
+
+
+class ExceptionType(str, Enum):
+    WINDOW_REJECT = "window_reject"
+    MATERIAL_INVALID = "material_invalid"
+    ELDER_ABSENT = "elder_absent"
+    COMPANION_LATE = "companion_late"
+    SUPPLEMENT_FAIL = "supplement_fail"
+    POLICY_CHANGED = "policy_changed"
+    ELDER_UNWELL = "elder_unwell"
+    OTHER = "other"
+
+
+class ExceptionStatus(str, Enum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    IN_PROGRESS = "in_progress"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
+
+
+class DisposalPriority(str, Enum):
+    P1_URGENT = "p1_urgent"
+    P2_HIGH = "p2_high"
+    P3_MEDIUM = "p3_medium"
+    P4_LOW = "p4_low"
+
+
+class ResponsibleRole(str, Enum):
+    WINDOW_STAFF = "window_staff"
+    COMMUNITY_WORKER = "community_worker"
+    ACCOMPANY_MANAGER = "accompany_manager"
+    SUPERVISOR = "supervisor"
+    MEDICAL_STAFF = "medical_staff"
+
+
+class ExceptionSourceType(str, Enum):
+    VERIFY_RECORD = "verify_record"
+    PRE_REVIEW_ORDER = "pre_review_order"
+    ACCOMPANY_APPOINTMENT = "accompany_appointment"
+
+
+class ExceptionCreateRequest(BaseModel):
+    exception_type: ExceptionType
+    source_type: ExceptionSourceType
+    source_id: int = Field(..., description="关联来源记录ID: 校验记录ID/预审工单ID/陪同预约单ID")
+    reporter: str = Field(..., min_length=1, max_length=50, description="上报人姓名")
+    reporter_role: str = Field(..., min_length=1, max_length=50, description="上报人角色")
+    reporter_phone: Optional[str] = Field(None, pattern=r"^1[3-9]\d{9}$", description="上报人联系电话")
+    description: str = Field(..., min_length=1, max_length=500, description="异常详情描述")
+    location: Optional[str] = Field(None, max_length=200, description="发生地点/窗口")
+    impact_completion: bool = Field(True, description="是否影响办事完成")
+    evidence_images: List[str] = []
+    extra_info: Optional[Dict[str, Any]] = None
+
+
+class ExceptionDisposalOrder(BaseModel):
+    id: int
+    exception_no: str
+    exception_type: str
+    source_type: str
+    source_id: int
+    item_code: Optional[str]
+    item_name: Optional[str]
+    elder_name: Optional[str]
+    elder_type: Optional[str]
+    community: Optional[str]
+    expected_window: Optional[str]
+    reporter: str
+    reporter_role: str
+    reporter_phone: Optional[str]
+    description: str
+    location: Optional[str]
+    impact_completion: bool
+    risk_level: str
+    status: str
+    priority: str
+    responsible_role: str
+    responsible_person: Optional[str]
+    responsible_phone: Optional[str]
+    suggested_actions: List[str]
+    latest_deadline: datetime
+    follow_up_required: bool
+    follow_up_deadline: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+    closed_at: Optional[datetime]
+    closed_by: Optional[str]
+    close_remark: Optional[str]
+
+
+class ExceptionStatusUpdateRequest(BaseModel):
+    status: ExceptionStatus
+    operator: str = Field(..., min_length=1, description="操作人")
+    remark: Optional[str] = Field(None, max_length=500, description="状态变更说明")
+
+
+class ExceptionAssignRequest(BaseModel):
+    responsible_role: Optional[ResponsibleRole]
+    responsible_person: str = Field(..., min_length=1, max_length=50, description="责任人姓名")
+    responsible_phone: Optional[str] = Field(None, pattern=r"^1[3-9]\d{9}$", description="责任人联系电话")
+    assigned_by: str = Field(..., min_length=1, description="指派人")
+    assign_remark: Optional[str] = Field(None, max_length=500)
+
+
+class ExceptionProcessingRecordCreate(BaseModel):
+    exception_id: int
+    processor: str = Field(..., min_length=1, max_length=50, description="处理人")
+    action: str = Field(..., min_length=1, max_length=200, description="处理动作")
+    result: str = Field(..., min_length=1, max_length=1000, description="处理结果描述")
+    next_step: Optional[str] = Field(None, max_length=500)
+    duration_minutes: Optional[int] = Field(0, ge=0)
+
+
+class ExceptionProcessingRecord(BaseModel):
+    id: int
+    exception_id: int
+    processor: str
+    action: str
+    result: str
+    next_step: Optional[str]
+    duration_minutes: int
+    created_at: datetime
+
+
+class ExceptionStatusHistory(BaseModel):
+    id: int
+    exception_id: int
+    from_status: Optional[str]
+    to_status: str
+    operator: str
+    remark: Optional[str]
+    created_at: datetime
+
+
+class ExceptionDetail(BaseModel):
+    order: ExceptionDisposalOrder
+    source_info: Optional[Dict[str, Any]]
+    processing_records: List[ExceptionProcessingRecord]
+    status_history: List[ExceptionStatusHistory]
+
+
+class ExceptionListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[ExceptionDisposalOrder]
+
+
+class ExceptionCloseRequest(BaseModel):
+    closed_by: str = Field(..., min_length=1, description="关闭确认人")
+    close_remark: str = Field(..., min_length=1, max_length=500, description="关闭说明")
+    is_resolved: bool = Field(True, description="是否已解决")
+    follow_up_suggestion: Optional[str] = Field(None, max_length=500)
+
+
+class ExceptionStatsItemRank(BaseModel):
+    item_code: str
+    item_name: str
+    exception_count: int
+    exception_rate: float
+    rank: int
+
+
+class ExceptionStatsTypeAvgDuration(BaseModel):
+    exception_type: str
+    exception_type_name: str
+    avg_duration_minutes: float
+    count: int
+
+
+class ExceptionStatsFailureReason(BaseModel):
+    reason: str
+    count: int
+    rank: int
+
+
+class ExceptionStatsOverall(BaseModel):
+    total_exceptions: int
+    exception_rate: float
+    pending_count: int
+    in_progress_count: int
+    resolved_count: int
+    closed_count: int
+    timeout_count: int
+    timeout_rate: float
+    item_exception_ranking: List[ExceptionStatsItemRank]
+    type_avg_duration: List[ExceptionStatsTypeAvgDuration]
+    top_failure_reasons: List[ExceptionStatsFailureReason]
+    accompany_exception_rate: float
+    accompany_exception_count: int
+    accompany_total: int

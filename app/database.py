@@ -15,7 +15,11 @@ from .schemas import (
     AccompanyAppointment, MatchedCompanion, AccompanyFollowUpRecord,
     AccompanyStatsCommunity, AccompanyStatsRiskCoverage,
     AccompanyStatsCompanionWorkload, AccompanyStatsMaterialFailure,
-    AccompanyStatsOverall
+    AccompanyStatsOverall,
+    ExceptionDisposalOrder, ExceptionProcessingRecord, ExceptionStatusHistory,
+    ExceptionStatsItemRank, ExceptionStatsTypeAvgDuration, ExceptionStatsFailureReason,
+    ExceptionStatsOverall, ExceptionType, ExceptionStatus, DisposalPriority,
+    ResponsibleRole
 )
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "elder_service.db")
@@ -25,12 +29,16 @@ class DictEncoder(json.JSONEncoder):
     def default(self, obj):
         from .schemas import (
             MobilityLevel, AccompanyDemandType, CompanionType,
-            AppointmentStatus, ConfirmStatus
+            AppointmentStatus, ConfirmStatus,
+            ExceptionType, ExceptionStatus, DisposalPriority,
+            ResponsibleRole, ExceptionSourceType
         )
         if isinstance(obj, (
             ElderType, AgentRelation, MaterialCategory, PhotoSpec,
             MobilityLevel, AccompanyDemandType, CompanionType,
-            AppointmentStatus, ConfirmStatus, RiskLevel, ServiceWindow
+            AppointmentStatus, ConfirmStatus, RiskLevel, ServiceWindow,
+            ExceptionType, ExceptionStatus, DisposalPriority,
+            ResponsibleRole, ExceptionSourceType
         )):
             return obj.value
         return super().default(obj)
@@ -372,6 +380,93 @@ class Database:
                     follower TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(appointment_id) REFERENCES accompany_appointments(id)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS exception_disposal_orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    exception_no TEXT UNIQUE NOT NULL,
+                    exception_type TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_id INTEGER NOT NULL,
+                    item_code TEXT,
+                    item_name TEXT,
+                    elder_name TEXT,
+                    elder_type TEXT,
+                    community TEXT,
+                    expected_window TEXT,
+                    reporter TEXT NOT NULL,
+                    reporter_role TEXT NOT NULL,
+                    reporter_phone TEXT,
+                    description TEXT NOT NULL,
+                    location TEXT,
+                    impact_completion INTEGER DEFAULT 1,
+                    risk_level TEXT NOT NULL DEFAULT 'medium',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    priority TEXT NOT NULL DEFAULT 'p3_medium',
+                    responsible_role TEXT NOT NULL DEFAULT 'supervisor',
+                    responsible_person TEXT,
+                    responsible_phone TEXT,
+                    suggested_actions_json TEXT DEFAULT '[]',
+                    latest_deadline TEXT NOT NULL,
+                    follow_up_required INTEGER DEFAULT 1,
+                    follow_up_deadline TEXT,
+                    evidence_images_json TEXT DEFAULT '[]',
+                    extra_info_json TEXT DEFAULT '{}',
+                    closed_at TEXT,
+                    closed_by TEXT,
+                    close_remark TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_status ON exception_disposal_orders(status)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_type ON exception_disposal_orders(exception_type)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_item ON exception_disposal_orders(item_code)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_community ON exception_disposal_orders(community)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_window ON exception_disposal_orders(expected_window)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_priority ON exception_disposal_orders(priority)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_responsible ON exception_disposal_orders(responsible_person)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_exc_created ON exception_disposal_orders(created_at)
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS exception_processing_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    exception_id INTEGER NOT NULL,
+                    processor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    next_step TEXT,
+                    duration_minutes INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(exception_id) REFERENCES exception_disposal_orders(id)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS exception_status_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    exception_id INTEGER NOT NULL,
+                    from_status TEXT,
+                    to_status TEXT NOT NULL,
+                    operator TEXT NOT NULL,
+                    remark TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(exception_id) REFERENCES exception_disposal_orders(id)
                 )
             """)
 
@@ -2384,3 +2479,859 @@ def db_get_accompany_stats(
 
 
 Database.get_accompany_stats = db_get_accompany_stats
+
+
+def _row_to_exception_order(row: sqlite3.Row) -> ExceptionDisposalOrder:
+    return ExceptionDisposalOrder(
+        id=row["id"],
+        exception_no=row["exception_no"],
+        exception_type=row["exception_type"],
+        source_type=row["source_type"],
+        source_id=row["source_id"],
+        item_code=row["item_code"],
+        item_name=row["item_name"],
+        elder_name=row["elder_name"],
+        elder_type=row["elder_type"],
+        community=row["community"],
+        expected_window=row["expected_window"],
+        reporter=row["reporter"],
+        reporter_role=row["reporter_role"],
+        reporter_phone=row["reporter_phone"],
+        description=row["description"],
+        location=row["location"],
+        impact_completion=bool(row["impact_completion"]),
+        risk_level=row["risk_level"],
+        status=row["status"],
+        priority=row["priority"],
+        responsible_role=row["responsible_role"],
+        responsible_person=row["responsible_person"],
+        responsible_phone=row["responsible_phone"],
+        suggested_actions=json.loads(row["suggested_actions_json"]) if row["suggested_actions_json"] else [],
+        latest_deadline=datetime.fromisoformat(row["latest_deadline"]),
+        follow_up_required=bool(row["follow_up_required"]),
+        follow_up_deadline=datetime.fromisoformat(row["follow_up_deadline"]) if row["follow_up_deadline"] else None,
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+        closed_at=datetime.fromisoformat(row["closed_at"]) if row["closed_at"] else None,
+        closed_by=row["closed_by"],
+        close_remark=row["close_remark"]
+    )
+
+
+def _row_to_processing_record(row: sqlite3.Row) -> ExceptionProcessingRecord:
+    return ExceptionProcessingRecord(
+        id=row["id"],
+        exception_id=row["exception_id"],
+        processor=row["processor"],
+        action=row["action"],
+        result=row["result"],
+        next_step=row["next_step"],
+        duration_minutes=row["duration_minutes"] or 0,
+        created_at=datetime.fromisoformat(row["created_at"])
+    )
+
+
+def _row_to_status_history(row: sqlite3.Row) -> ExceptionStatusHistory:
+    return ExceptionStatusHistory(
+        id=row["id"],
+        exception_id=row["exception_id"],
+        from_status=row["from_status"],
+        to_status=row["to_status"],
+        operator=row["operator"],
+        remark=row["remark"],
+        created_at=datetime.fromisoformat(row["created_at"])
+    )
+
+
+def _generate_exception_no(dt: datetime) -> str:
+    return f"EX{dt.strftime('%Y%m%d%H%M%S')}{dt.microsecond // 1000:03d}"
+
+
+EXCEPTION_TYPE_NAMES = {
+    "window_reject": "窗口退回",
+    "material_invalid": "材料被判无效",
+    "elder_absent": "老人未到场",
+    "companion_late": "陪同人迟到",
+    "supplement_fail": "现场补件失败",
+    "policy_changed": "窗口政策变更",
+    "elder_unwell": "老人身体不适",
+    "other": "其他异常"
+}
+
+
+def _generate_disposal_plan(
+    exception_type: str,
+    elder_type: Optional[str],
+    risk_level: Optional[str],
+    impact_completion: bool,
+    item_code: Optional[str]
+) -> Dict[str, Any]:
+    from datetime import timedelta
+    now = datetime.now()
+
+    priority_scores = {
+        "p1_urgent": 0,
+        "p2_high": 0,
+        "p3_medium": 0,
+        "p4_low": 0
+    }
+
+    urgent_types = ["elder_unwell", "elder_absent"]
+    high_types = ["window_reject", "material_invalid", "policy_changed", "companion_late"]
+    medium_types = ["supplement_fail"]
+
+    if exception_type in urgent_types:
+        priority_scores["p1_urgent"] += 3
+    elif exception_type in high_types:
+        priority_scores["p2_high"] += 2
+    elif exception_type in medium_types:
+        priority_scores["p3_medium"] += 1
+    else:
+        priority_scores["p4_low"] += 1
+
+    if risk_level == "critical":
+        priority_scores["p1_urgent"] += 3
+    elif risk_level == "high":
+        priority_scores["p2_high"] += 2
+    elif risk_level == "medium":
+        priority_scores["p3_medium"] += 1
+
+    if elder_type in ("special_elder", "disabled", "low_income"):
+        priority_scores["p2_high"] += 1
+
+    if impact_completion:
+        priority_scores["p2_high"] += 2
+
+    sorted_priorities = sorted(priority_scores.items(), key=lambda x: x[1], reverse=True)
+    priority = sorted_priorities[0][0]
+
+    deadline_hours = {
+        "p1_urgent": 1,
+        "p2_high": 4,
+        "p3_medium": 24,
+        "p4_low": 72
+    }
+    latest_deadline = now + timedelta(hours=deadline_hours.get(priority, 24))
+    follow_up_deadline = now + timedelta(days=3)
+
+    type_role_map = {
+        "window_reject": ResponsibleRole.WINDOW_STAFF.value,
+        "material_invalid": ResponsibleRole.WINDOW_STAFF.value,
+        "elder_absent": ResponsibleRole.COMMUNITY_WORKER.value,
+        "companion_late": ResponsibleRole.ACCOMPANY_MANAGER.value,
+        "supplement_fail": ResponsibleRole.WINDOW_STAFF.value,
+        "policy_changed": ResponsibleRole.SUPERVISOR.value,
+        "elder_unwell": ResponsibleRole.MEDICAL_STAFF.value,
+        "other": ResponsibleRole.SUPERVISOR.value
+    }
+    responsible_role = type_role_map.get(exception_type, ResponsibleRole.SUPERVISOR.value)
+
+    type_actions_map = {
+        "window_reject": [
+            "立即核实退回原因，与窗口确认最新政策要求",
+            "联系老人或家属说明情况，解释退回复核要点",
+            "协助重新准备缺失或不符合要求的材料",
+            "安排二次预审或预约下次办理时间"
+        ],
+        "material_invalid": [
+            "确认材料无效的具体原因（过期、复印不清、信息不符等）",
+            "告知家属需要重新准备的材料清单和规范",
+            "协调社区或相关部门出具证明材料",
+            "跟踪材料重新准备进度"
+        ],
+        "elder_absent": [
+            "联系家属确认老人未到场原因",
+            "如为身体原因，协调上门服务或改期办理",
+            "评估是否需要安排陪同服务",
+            "记录老人情况并持续关注"
+        ],
+        "companion_late": [
+            "联系陪同人确认位置和预计到达时间",
+            "如陪同人无法按时到达，协调备用陪同人",
+            "与窗口沟通延迟取号或改期",
+            "事后评估陪同资源调度机制"
+        ],
+        "supplement_fail": [
+            "分析补件失败的具体环节和原因",
+            "与材料出具部门协调加急处理",
+            "安排专人协助办理补充材料",
+            "视情况启动容缺受理或绿色通道"
+        ],
+        "policy_changed": [
+            "获取窗口最新政策文件和执行标准",
+            "更新系统事项配置和材料清单",
+            "通知近期预约老人政策变动情况",
+            "开展窗口人员培训确保政策统一执行"
+        ],
+        "elder_unwell": [
+            "立即联系医护人员或拨打急救电话",
+            "安抚老人情绪并提供临时休息场所",
+            "通知家属老人情况",
+            "评估老人身体状况，改期或安排上门办理"
+        ],
+        "other": [
+            "调查核实异常具体情况",
+            "协调相关责任部门处理",
+            "保持与老人和家属的沟通",
+            "记录异常原因形成案例库"
+        ]
+    }
+    suggested_actions = type_actions_map.get(exception_type, type_actions_map["other"])
+
+    if impact_completion:
+        suggested_actions.append("【重要】该异常已影响事项办理进度，需优先处理并跟踪至完成")
+
+    if risk_level in ("high", "critical"):
+        suggested_actions.append("【风险提示】涉及高风险老人，处置过程需特别关注老人安全与感受")
+
+    follow_up_required = True
+    if exception_type in ("other",) and not impact_completion and risk_level in ("low", "medium"):
+        follow_up_required = False
+
+    return {
+        "priority": priority,
+        "responsible_role": responsible_role,
+        "suggested_actions": suggested_actions,
+        "latest_deadline": latest_deadline,
+        "follow_up_required": follow_up_required,
+        "follow_up_deadline": follow_up_deadline if follow_up_required else None
+    }
+
+
+def _fetch_source_info(self, source_type: str, source_id: int) -> Optional[Dict[str, Any]]:
+    if source_type == "verify_record":
+        return self.get_history_detail(source_id)
+    elif source_type == "pre_review_order":
+        order = self.get_pre_review_order(source_id)
+        return order.model_dump(mode="json") if order else None
+    elif source_type == "accompany_appointment":
+        appt = self.get_accompany_appointment(source_id)
+        return appt.model_dump(mode="json") if appt else None
+    return None
+
+
+Database._fetch_source_info = _fetch_source_info
+
+
+def db_create_exception(self, data: Dict[str, Any]) -> ExceptionDisposalOrder:
+    source_type = data["source_type"].value if hasattr(data["source_type"], "value") else data["source_type"]
+    source_id = data["source_id"]
+
+    item_code = None
+    item_name = None
+    elder_name = None
+    elder_type = None
+    community = None
+    expected_window = None
+
+    source_info = self._fetch_source_info(source_type, source_id)
+    if source_info:
+        if source_type == "verify_record":
+            record = source_info.get("record")
+            if record:
+                if hasattr(record, "item_code"):
+                    item_code = record.item_code
+                    item_name = record.item_name
+                    elder_type = record.elder_type
+                else:
+                    item_code = record.get("item_code")
+                    item_name = record.get("item_name")
+                    elder_type = record.get("elder_type")
+        elif source_type == "pre_review_order":
+            item_code = source_info.get("item_code")
+            item_name = source_info.get("item_name")
+            elder_name = source_info.get("elder_name")
+            elder_type = source_info.get("elder_type")
+            expected_window = source_info.get("expected_window")
+        elif source_type == "accompany_appointment":
+            item_code = source_info.get("item_code")
+            item_name = source_info.get("item_name")
+            elder_name = source_info.get("elder_name")
+            elder_type = source_info.get("elder_type")
+            community = source_info.get("community")
+            expected_window = source_info.get("expected_window")
+
+    if elder_type in ("special_elder", "disabled", "low_income"):
+        derived_risk = "high"
+    elif elder_type == "remote_resident":
+        derived_risk = "medium"
+    else:
+        derived_risk = "medium"
+
+    exception_type_val = data["exception_type"].value if hasattr(data["exception_type"], "value") else data["exception_type"]
+
+    disposal_plan = _generate_disposal_plan(
+        exception_type=exception_type_val,
+        elder_type=elder_type,
+        risk_level=derived_risk,
+        impact_completion=data.get("impact_completion", True),
+        item_code=item_code
+    )
+
+    now = datetime.now()
+    exception_no = _generate_exception_no(now)
+
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO exception_disposal_orders
+            (exception_no, exception_type, source_type, source_id,
+             item_code, item_name, elder_name, elder_type, community, expected_window,
+             reporter, reporter_role, reporter_phone, description, location,
+             impact_completion, risk_level, status, priority, responsible_role,
+             suggested_actions_json, latest_deadline, follow_up_required, follow_up_deadline,
+             evidence_images_json, extra_info_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            exception_no, exception_type_val, source_type, source_id,
+            item_code, item_name, elder_name, elder_type, community, expected_window,
+            data["reporter"], data["reporter_role"], data.get("reporter_phone"),
+            data["description"], data.get("location"),
+            1 if data.get("impact_completion", True) else 0,
+            derived_risk, "pending", disposal_plan["priority"],
+            disposal_plan["responsible_role"],
+            json.dumps(disposal_plan["suggested_actions"], ensure_ascii=False),
+            disposal_plan["latest_deadline"].isoformat(),
+            1 if disposal_plan["follow_up_required"] else 0,
+            disposal_plan["follow_up_deadline"].isoformat() if disposal_plan["follow_up_deadline"] else None,
+            json.dumps(data.get("evidence_images", []), ensure_ascii=False),
+            json.dumps(data.get("extra_info", {}) or {}, ensure_ascii=False),
+            now.isoformat(), now.isoformat()
+        ))
+        new_id = c.lastrowid
+        c.execute("""
+            INSERT INTO exception_status_history
+            (exception_id, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (new_id, None, "pending", "system", f"异常事件自动创建并生成处置单，优先级：{disposal_plan['priority']}", now.isoformat()))
+
+    return self.get_exception(new_id)
+
+
+Database.create_exception = db_create_exception
+
+
+def db_get_exception(self, exception_id: int) -> Optional[ExceptionDisposalOrder]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM exception_disposal_orders WHERE id = ?", (exception_id,))
+        row = c.fetchone()
+        return _row_to_exception_order(row) if row else None
+
+
+Database.get_exception = db_get_exception
+
+
+def db_get_exception_by_no(self, exception_no: str) -> Optional[ExceptionDisposalOrder]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM exception_disposal_orders WHERE exception_no = ?", (exception_no,))
+        row = c.fetchone()
+        return _row_to_exception_order(row) if row else None
+
+
+Database.get_exception_by_no = db_get_exception_by_no
+
+
+def db_list_exceptions(
+    self,
+    item_code: Optional[str] = None,
+    community: Optional[str] = None,
+    expected_window: Optional[str] = None,
+    exception_type: Optional[str] = None,
+    responsible_person: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    elder_name: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20
+) -> Dict[str, Any]:
+    sql = "SELECT * FROM exception_disposal_orders WHERE 1=1"
+    count_sql = "SELECT COUNT(*) as cnt FROM exception_disposal_orders WHERE 1=1"
+    params = []
+    if item_code:
+        sql += " AND item_code = ?"
+        count_sql += " AND item_code = ?"
+        params.append(item_code)
+    if community:
+        sql += " AND community = ?"
+        count_sql += " AND community = ?"
+        params.append(community)
+    if expected_window:
+        sql += " AND expected_window = ?"
+        count_sql += " AND expected_window = ?"
+        params.append(expected_window)
+    if exception_type:
+        sql += " AND exception_type = ?"
+        count_sql += " AND exception_type = ?"
+        params.append(exception_type)
+    if responsible_person:
+        sql += " AND responsible_person = ?"
+        count_sql += " AND responsible_person = ?"
+        params.append(responsible_person)
+    if status:
+        sql += " AND status = ?"
+        count_sql += " AND status = ?"
+        params.append(status)
+    if priority:
+        sql += " AND priority = ?"
+        count_sql += " AND priority = ?"
+        params.append(priority)
+    if start_date:
+        sql += " AND date(created_at) >= date(?)"
+        count_sql += " AND date(created_at) >= date(?)"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date(created_at) <= date(?)"
+        count_sql += " AND date(created_at) <= date(?)"
+        params.append(end_date)
+    if elder_name:
+        sql += " AND elder_name LIKE ?"
+        count_sql += " AND elder_name LIKE ?"
+        params.append(f"%{elder_name}%")
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(count_sql, params)
+        total = c.fetchone()["cnt"] or 0
+        sql += " ORDER BY CASE priority " \
+               "WHEN 'p1_urgent' THEN 1 " \
+               "WHEN 'p2_high' THEN 2 " \
+               "WHEN 'p3_medium' THEN 3 " \
+               "WHEN 'p4_low' THEN 4 END, " \
+               "created_at DESC LIMIT ? OFFSET ?"
+        offset = (page - 1) * page_size
+        full_params = params + [page_size, offset]
+        c.execute(sql, full_params)
+        items = [_row_to_exception_order(r) for r in c.fetchall()]
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+
+Database.list_exceptions = db_list_exceptions
+
+
+def db_update_exception_status(
+    self,
+    exception_id: int,
+    status: str,
+    operator: str,
+    remark: Optional[str] = None
+) -> Optional[ExceptionDisposalOrder]:
+    existing = self.get_exception(exception_id)
+    if not existing:
+        return None
+    from_status = existing.status
+    now = datetime.now()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE exception_disposal_orders SET status = ?, updated_at = ? WHERE id = ?
+        """, (status, now.isoformat(), exception_id))
+        c.execute("""
+            INSERT INTO exception_status_history
+            (exception_id, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (exception_id, from_status, status, operator, remark or f"状态变更为{status}", now.isoformat()))
+    return self.get_exception(exception_id)
+
+
+Database.update_exception_status = db_update_exception_status
+
+
+def db_assign_exception(
+    self,
+    exception_id: int,
+    responsible_role: Optional[str],
+    responsible_person: str,
+    responsible_phone: Optional[str],
+    assigned_by: str,
+    assign_remark: Optional[str] = None
+) -> Optional[ExceptionDisposalOrder]:
+    existing = self.get_exception(exception_id)
+    if not existing:
+        return None
+    now = datetime.now()
+    updates = [
+        "responsible_person = ?",
+        "status = 'assigned'",
+        "updated_at = ?"
+    ]
+    params = [responsible_person, now.isoformat()]
+    if responsible_role:
+        updates.append("responsible_role = ?")
+        params.append(responsible_role)
+    if responsible_phone:
+        updates.append("responsible_phone = ?")
+        params.append(responsible_phone)
+    params.append(exception_id)
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(f"UPDATE exception_disposal_orders SET {', '.join(updates)} WHERE id = ?", params)
+        c.execute("""
+            INSERT INTO exception_status_history
+            (exception_id, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            exception_id, existing.status, "assigned", assigned_by,
+            f"指派责任人：{responsible_person}" + (f"，备注：{assign_remark}" if assign_remark else ""),
+            now.isoformat()
+        ))
+    return self.get_exception(exception_id)
+
+
+Database.assign_exception = db_assign_exception
+
+
+def db_add_processing_record(
+    self,
+    exception_id: int,
+    processor: str,
+    action: str,
+    result: str,
+    next_step: Optional[str] = None,
+    duration_minutes: int = 0
+) -> Optional[ExceptionProcessingRecord]:
+    existing = self.get_exception(exception_id)
+    if not existing:
+        return None
+    now = datetime.now()
+    new_id = None
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO exception_processing_records
+            (exception_id, processor, action, result, next_step, duration_minutes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (exception_id, processor, action, result, next_step, duration_minutes, now.isoformat()))
+        new_id = c.lastrowid
+        if existing.status in ("pending", "assigned"):
+            c.execute("""
+                UPDATE exception_disposal_orders SET status = 'in_progress', updated_at = ? WHERE id = ?
+            """, (now.isoformat(), exception_id))
+            c.execute("""
+                INSERT INTO exception_status_history
+                (exception_id, from_status, to_status, operator, remark, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (exception_id, existing.status, "in_progress", processor, "开始处理异常，记录处理动作", now.isoformat()))
+    if new_id:
+        with self._connect() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM exception_processing_records WHERE id = ?", (new_id,))
+            return _row_to_processing_record(c.fetchone())
+    return None
+
+
+Database.add_processing_record = db_add_processing_record
+
+
+def db_close_exception(
+    self,
+    exception_id: int,
+    closed_by: str,
+    close_remark: str,
+    is_resolved: bool = True,
+    follow_up_suggestion: Optional[str] = None
+) -> Optional[ExceptionDisposalOrder]:
+    existing = self.get_exception(exception_id)
+    if not existing:
+        return None
+    now = datetime.now()
+    status = "closed"
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE exception_disposal_orders
+            SET status = ?, closed_at = ?, closed_by = ?, close_remark = ?, updated_at = ?
+            WHERE id = ?
+        """, (status, now.isoformat(), closed_by, close_remark, now.isoformat(), exception_id))
+        remark = f"关闭异常，结果：{'已解决' if is_resolved else '未解决'}，说明：{close_remark}"
+        if follow_up_suggestion:
+            remark += f"，回访建议：{follow_up_suggestion}"
+        c.execute("""
+            INSERT INTO exception_status_history
+            (exception_id, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (exception_id, existing.status, status, closed_by, remark, now.isoformat()))
+    return self.get_exception(exception_id)
+
+
+Database.close_exception = db_close_exception
+
+
+def db_get_exception_processing_records(self, exception_id: int) -> List[ExceptionProcessingRecord]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM exception_processing_records
+            WHERE exception_id = ? ORDER BY created_at DESC
+        """, (exception_id,))
+        return [_row_to_processing_record(r) for r in c.fetchall()]
+
+
+Database.get_exception_processing_records = db_get_exception_processing_records
+
+
+def db_get_exception_status_history(self, exception_id: int) -> List[ExceptionStatusHistory]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM exception_status_history
+            WHERE exception_id = ? ORDER BY created_at ASC
+        """, (exception_id,))
+        return [_row_to_status_history(r) for r in c.fetchall()]
+
+
+Database.get_exception_status_history = db_get_exception_status_history
+
+
+def db_get_exception_stats(
+    self,
+    item_code: Optional[str] = None,
+    community: Optional[str] = None,
+    expected_window: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> Dict[str, Any]:
+    base_sql = "SELECT * FROM exception_disposal_orders WHERE 1=1"
+    params = []
+    if item_code:
+        base_sql += " AND item_code = ?"
+        params.append(item_code)
+    if community:
+        base_sql += " AND community = ?"
+        params.append(community)
+    if expected_window:
+        base_sql += " AND expected_window = ?"
+        params.append(expected_window)
+    if start_date:
+        base_sql += " AND date(created_at) >= date(?)"
+        params.append(start_date)
+    if end_date:
+        base_sql += " AND date(created_at) <= date(?)"
+        params.append(end_date)
+
+    with self._connect() as conn:
+        c = conn.cursor()
+
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as total"), params)
+        total_exceptions = c.fetchone()["total"] or 0
+
+        for status_val in ("pending", "in_progress", "resolved", "closed"):
+            cnt_sql = base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + f" AND status = '{status_val}'"
+            c.execute(cnt_sql, params)
+
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND status = 'pending'", params)
+        pending_count = c.fetchone()["cnt"] or 0
+
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND status = 'in_progress'", params)
+        in_progress_count = c.fetchone()["cnt"] or 0
+
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND status = 'resolved'", params)
+        resolved_count = c.fetchone()["cnt"] or 0
+
+        c.execute(base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND status = 'closed'", params)
+        closed_count = c.fetchone()["cnt"] or 0
+
+        now_iso = datetime.now().isoformat()
+        timeout_sql = base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND latest_deadline < ? AND status NOT IN ('closed', 'resolved')"
+        timeout_params = params + [now_iso]
+        c.execute(timeout_sql, timeout_params)
+        timeout_count = c.fetchone()["cnt"] or 0
+        timeout_rate = round(timeout_count / total_exceptions, 4) if total_exceptions > 0 else 0.0
+
+        verify_sql = "SELECT COUNT(*) as cnt FROM verification_history"
+        pr_sql = "SELECT COUNT(*) as cnt FROM pre_review_orders"
+        acc_sql = "SELECT COUNT(*) as cnt FROM accompany_appointments"
+        v_params = []
+        p_params = []
+        a_params = []
+        if start_date:
+            verify_sql += " WHERE date(created_at) >= date(?)"
+            pr_sql += " WHERE date(created_at) >= date(?)"
+            acc_sql += " WHERE date(created_at) >= date(?)"
+            v_params.append(start_date)
+            p_params.append(start_date)
+            a_params.append(start_date)
+            if end_date:
+                verify_sql += " AND date(created_at) <= date(?)"
+                pr_sql += " AND date(created_at) <= date(?)"
+                acc_sql += " AND date(created_at) <= date(?)"
+                v_params.append(end_date)
+                p_params.append(end_date)
+                a_params.append(end_date)
+        elif end_date:
+            verify_sql += " WHERE date(created_at) <= date(?)"
+            pr_sql += " WHERE date(created_at) <= date(?)"
+            acc_sql += " WHERE date(created_at) <= date(?)"
+            v_params.append(end_date)
+            p_params.append(end_date)
+            a_params.append(end_date)
+
+        c.execute(verify_sql, v_params)
+        total_verify = c.fetchone()["cnt"] or 0
+        c.execute(pr_sql, p_params)
+        total_pr = c.fetchone()["cnt"] or 0
+        total_transactions = total_verify + total_pr
+        exception_rate = round(total_exceptions / total_transactions, 4) if total_transactions > 0 else 0.0
+
+        item_rank_sql = """
+            SELECT si.item_code, si.item_name,
+                   COUNT(eo.id) as exc_cnt
+            FROM service_items si
+            LEFT JOIN exception_disposal_orders eo ON si.item_code = eo.item_code
+            WHERE 1=1
+        """
+        ir_params = []
+        if community:
+            item_rank_sql += " AND eo.community = ?"
+            ir_params.append(community)
+        if expected_window:
+            item_rank_sql += " AND eo.expected_window = ?"
+            ir_params.append(expected_window)
+        if start_date:
+            item_rank_sql += " AND date(eo.created_at) >= date(?)"
+            ir_params.append(start_date)
+        if end_date:
+            item_rank_sql += " AND date(eo.created_at) <= date(?)"
+            ir_params.append(end_date)
+        item_rank_sql += " GROUP BY si.item_code ORDER BY exc_cnt DESC LIMIT 20"
+        c.execute(item_rank_sql, ir_params)
+        item_exception_ranking = []
+        rank = 0
+        for r in c.fetchall():
+            rank += 1
+            exc_cnt = r["exc_cnt"] or 0
+            item_total_sql = "SELECT COUNT(*) as cnt FROM (" \
+                             "SELECT id FROM verification_history WHERE item_code = ? " \
+                             "UNION ALL SELECT id FROM pre_review_orders WHERE item_code = ?" \
+                             ") t"
+            t_params = [r["item_code"], r["item_code"]]
+            if start_date or end_date:
+                item_total_sql = "SELECT COUNT(*) as cnt FROM (" \
+                                 "SELECT id FROM verification_history WHERE item_code = ? {date_clause_v}" \
+                                 " UNION ALL SELECT id FROM pre_review_orders WHERE item_code = ? {date_clause_pr}" \
+                                 ") t"
+                date_clause_v = ""
+                date_clause_pr = ""
+                extra_params = []
+                if start_date:
+                    date_clause_v += " AND date(created_at) >= date(?)"
+                    date_clause_pr += " AND date(created_at) >= date(?)"
+                    extra_params.extend([start_date, start_date])
+                if end_date:
+                    date_clause_v += " AND date(created_at) <= date(?)"
+                    date_clause_pr += " AND date(created_at) <= date(?)"
+                    extra_params.extend([end_date, end_date])
+                item_total_sql = item_total_sql.format(date_clause_v=date_clause_v, date_clause_pr=date_clause_pr)
+                t_params.extend(extra_params)
+            c.execute(item_total_sql, t_params)
+            item_total = c.fetchone()["cnt"] or 0
+            item_exception_ranking.append(ExceptionStatsItemRank(
+                item_code=r["item_code"],
+                item_name=r["item_name"],
+                exception_count=exc_cnt,
+                exception_rate=round(exc_cnt / item_total, 4) if item_total > 0 else 0.0,
+                rank=rank
+            ))
+
+        type_duration_sql = """
+            SELECT exception_type,
+                   COUNT(*) as cnt,
+                   AVG((julianday(COALESCE(closed_at, ?)) - julianday(created_at)) * 1440) as avg_dur
+            FROM exception_disposal_orders
+            WHERE 1=1
+        """
+        td_params = [now_iso]
+        if item_code:
+            type_duration_sql += " AND item_code = ?"
+            td_params.append(item_code)
+        if community:
+            type_duration_sql += " AND community = ?"
+            td_params.append(community)
+        if expected_window:
+            type_duration_sql += " AND expected_window = ?"
+            td_params.append(expected_window)
+        if start_date:
+            type_duration_sql += " AND date(created_at) >= date(?)"
+            td_params.append(start_date)
+        if end_date:
+            type_duration_sql += " AND date(created_at) <= date(?)"
+            td_params.append(end_date)
+        type_duration_sql += " GROUP BY exception_type ORDER BY cnt DESC"
+        c.execute(type_duration_sql, td_params)
+        type_avg_duration = []
+        for r in c.fetchall():
+            type_avg_duration.append(ExceptionStatsTypeAvgDuration(
+                exception_type=r["exception_type"],
+                exception_type_name=EXCEPTION_TYPE_NAMES.get(r["exception_type"], r["exception_type"]),
+                avg_duration_minutes=round(r["avg_dur"] or 0.0, 2),
+                count=r["cnt"] or 0
+            ))
+
+        failure_sql = """
+            SELECT eo.exception_type, COUNT(*) as cnt
+            FROM exception_disposal_orders eo
+            WHERE eo.impact_completion = 1
+        """
+        f_params = []
+        if item_code:
+            failure_sql += " AND eo.item_code = ?"
+            f_params.append(item_code)
+        if community:
+            failure_sql += " AND eo.community = ?"
+            f_params.append(community)
+        if expected_window:
+            failure_sql += " AND eo.expected_window = ?"
+            f_params.append(expected_window)
+        if start_date:
+            failure_sql += " AND date(eo.created_at) >= date(?)"
+            f_params.append(start_date)
+        if end_date:
+            failure_sql += " AND date(eo.created_at) <= date(?)"
+            f_params.append(end_date)
+        failure_sql += " GROUP BY eo.exception_type ORDER BY cnt DESC LIMIT 10"
+        c.execute(failure_sql, f_params)
+        top_failure_reasons = []
+        rank = 0
+        for r in c.fetchall():
+            rank += 1
+            top_failure_reasons.append(ExceptionStatsFailureReason(
+                reason=EXCEPTION_TYPE_NAMES.get(r["exception_type"], r["exception_type"]),
+                count=r["cnt"] or 0,
+                rank=rank
+            ))
+
+        acc_exc_sql = base_sql.replace("SELECT *", "SELECT COUNT(*) as cnt") + " AND source_type = 'accompany_appointment'"
+        c.execute(acc_exc_sql, params)
+        accompany_exception_count = c.fetchone()["cnt"] or 0
+
+        c.execute(acc_sql, a_params)
+        accompany_total = c.fetchone()["cnt"] or 0
+        accompany_exception_rate = round(accompany_exception_count / accompany_total, 4) if accompany_total > 0 else 0.0
+
+    overall = ExceptionStatsOverall(
+        total_exceptions=total_exceptions,
+        exception_rate=exception_rate,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        resolved_count=resolved_count,
+        closed_count=closed_count,
+        timeout_count=timeout_count,
+        timeout_rate=timeout_rate,
+        item_exception_ranking=item_exception_ranking,
+        type_avg_duration=type_avg_duration,
+        top_failure_reasons=top_failure_reasons,
+        accompany_exception_rate=accompany_exception_rate,
+        accompany_exception_count=accompany_exception_count,
+        accompany_total=accompany_total
+    )
+    return overall.model_dump(mode="json")
+
+
+Database.get_exception_stats = db_get_exception_stats
