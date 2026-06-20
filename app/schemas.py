@@ -803,3 +803,182 @@ class ExceptionStatsOverall(BaseModel):
     accompany_exception_rate: float
     accompany_exception_count: int
     accompany_total: int
+
+
+class PolicyChangeStatus(str, Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    EXPIRED = "expired"
+
+
+class PolicyRiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class PolicyImpactType(str, Enum):
+    MATERIAL_ADD = "material_add"
+    MATERIAL_REMOVE = "material_remove"
+    MATERIAL_MODIFY = "material_modify"
+    PROCESS_CHANGE = "process_change"
+    ELIGIBILITY_CHANGE = "eligibility_change"
+    WINDOW_CHANGE = "window_change"
+    OTHER = "other"
+
+
+class WarningStatus(str, Enum):
+    UNCONFIRMED = "unconfirmed"
+    CONFIRMED = "confirmed"
+    PROCESSED = "processed"
+    IGNORED = "ignored"
+
+
+class WarningSourceType(str, Enum):
+    VERIFY_RECORD = "verify_record"
+    PRE_REVIEW_ORDER = "pre_review_order"
+    ACCOMPANY_APPOINTMENT = "accompany_appointment"
+    EXCEPTION_ORDER = "exception_order"
+    SERVICE_ITEM = "service_item"
+
+
+class PolicyChangeCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200, description="政策变更标题")
+    applicable_items: List[str] = Field(..., description="适用事项编码列表")
+    applicable_windows: List[ServiceWindow] = []
+    impacted_materials: List[str] = []
+    impacted_elder_types: List[ElderType] = []
+    effective_date: str = Field(..., description="生效日期 YYYY-MM-DD")
+    expiry_date: Optional[str] = Field(None, description="失效日期 YYYY-MM-DD")
+    policy_source: str = Field(..., min_length=1, max_length=200, description="政策来源")
+    risk_level: PolicyRiskLevel = PolicyRiskLevel.MEDIUM
+    handling_suggestion: str = Field("", max_length=1000, description="处理建议")
+    impact_types: List[PolicyImpactType] = []
+    description: str = Field("", max_length=2000, description="政策变更详细描述")
+    added_materials: List[Dict[str, Any]] = []
+    removed_materials: List[Dict[str, Any]] = []
+    rejection_reasons: List[str] = []
+    status: PolicyChangeStatus = PolicyChangeStatus.DRAFT
+
+
+class PolicyChangeUpdate(BaseModel):
+    title: Optional[str] = None
+    applicable_items: Optional[List[str]] = None
+    applicable_windows: Optional[List[ServiceWindow]] = None
+    impacted_materials: Optional[List[str]] = None
+    impacted_elder_types: Optional[List[ElderType]] = None
+    effective_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    policy_source: Optional[str] = None
+    risk_level: Optional[PolicyRiskLevel] = None
+    handling_suggestion: Optional[str] = None
+    impact_types: Optional[List[PolicyImpactType]] = None
+    description: Optional[str] = None
+    added_materials: Optional[List[Dict[str, Any]]] = None
+    removed_materials: Optional[List[Dict[str, Any]]] = None
+    rejection_reasons: Optional[List[str]] = None
+    status: Optional[PolicyChangeStatus] = None
+
+
+class PolicyChange(BaseModel):
+    id: int
+    title: str
+    applicable_items: List[str]
+    applicable_windows: List[str]
+    impacted_materials: List[str]
+    impacted_elder_types: List[str]
+    effective_date: str
+    expiry_date: Optional[str]
+    policy_source: str
+    risk_level: str
+    handling_suggestion: str
+    impact_types: List[str]
+    description: str
+    added_materials: List[Dict[str, Any]]
+    removed_materials: List[Dict[str, Any]]
+    rejection_reasons: List[str]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PolicyChangeDetail(BaseModel):
+    policy: PolicyChange
+    impact_summary: Dict[str, Any]
+    warning_count: int
+    confirmed_warning_count: int
+
+
+class PolicyWarning(BaseModel):
+    id: int
+    policy_change_id: int
+    policy_title: str
+    source_type: str
+    source_id: int
+    source_no: Optional[str]
+    item_code: Optional[str]
+    item_name: Optional[str]
+    elder_name: Optional[str]
+    elder_type: Optional[str]
+    community: Optional[str]
+    expected_window: Optional[str]
+    appointment_date: Optional[str]
+    risk_level: str
+    status: str
+    impact_details: List[Dict[str, Any]]
+    created_at: datetime
+    confirmed_at: Optional[datetime]
+    confirmed_by: Optional[str]
+
+
+class PolicyWarningListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[PolicyWarning]
+
+
+class PolicyImpactQuery(BaseModel):
+    elder_type: Optional[ElderType] = None
+    item_code: Optional[str] = None
+    community: Optional[str] = None
+    expected_window: Optional[ServiceWindow] = None
+    appointment_date: Optional[str] = None
+
+
+class PolicyImpactResult(BaseModel):
+    is_affected: bool
+    affected_policies: List[Dict[str, Any]]
+    added_materials: List[Dict[str, Any]]
+    removed_materials: List[Dict[str, Any]]
+    rejection_reasons: List[str]
+    suggestions: List[str]
+    need_re_preview: bool
+    need_re_appointment: bool
+
+
+class PolicyStatsOverall(BaseModel):
+    total_policy_changes: int
+    active_policy_count: int
+    total_warnings: int
+    confirmed_warnings: int
+    unconfirmed_high_risk_warnings: int
+    item_policy_impact_ranking: List[Dict[str, Any]]
+    policy_exception_ratio: float
+    policy_exception_count: int
+    total_exceptions: int
+
+
+class PolicyWarningConfirmRequest(BaseModel):
+    confirmed_by: str = Field(..., min_length=1, max_length=50, description="确认人")
+    confirm_remark: Optional[str] = Field(None, max_length=500, description="确认备注")
+
+
+class PolicyScanResult(BaseModel):
+    policy_change_id: int
+    policy_title: str
+    scanned_sources: Dict[str, Any]
+    new_warnings_count: int
+    total_affected_count: int

@@ -15,6 +15,7 @@ from app.routers import stats as stats_router
 from app.routers import pre_review as pre_review_router
 from app.routers import accompany as accompany_router
 from app.routers import exception as exception_router
+from app.routers import policy as policy_router
 
 
 def uniform_error(code: int, message: str) -> UniformResponse:
@@ -82,6 +83,7 @@ stats_router.set_db(db)
 pre_review_router.set_db_and_engine(db, engine)
 accompany_router.set_db(db)
 exception_router.set_db(db)
+policy_router.set_db(db)
 
 
 @app.middleware("http")
@@ -159,6 +161,7 @@ app.include_router(stats_router.router)
 app.include_router(pre_review_router.router)
 app.include_router(accompany_router.router)
 app.include_router(exception_router.router)
+app.include_router(policy_router.router)
 
 
 if __name__ == "__main__":

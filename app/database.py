@@ -19,7 +19,9 @@ from .schemas import (
     ExceptionDisposalOrder, ExceptionProcessingRecord, ExceptionStatusHistory,
     ExceptionStatsItemRank, ExceptionStatsTypeAvgDuration, ExceptionStatsFailureReason,
     ExceptionStatsOverall, ExceptionType, ExceptionStatus, DisposalPriority,
-    ResponsibleRole
+    ResponsibleRole,
+    PolicyChange, PolicyWarning, PolicyRiskLevel, PolicyChangeStatus,
+    WarningStatus, WarningSourceType, PolicyImpactType
 )
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "elder_service.db")
@@ -31,14 +33,18 @@ class DictEncoder(json.JSONEncoder):
             MobilityLevel, AccompanyDemandType, CompanionType,
             AppointmentStatus, ConfirmStatus,
             ExceptionType, ExceptionStatus, DisposalPriority,
-            ResponsibleRole, ExceptionSourceType
+            ResponsibleRole, ExceptionSourceType,
+            PolicyChangeStatus, PolicyRiskLevel, PolicyImpactType,
+            WarningStatus, WarningSourceType
         )
         if isinstance(obj, (
             ElderType, AgentRelation, MaterialCategory, PhotoSpec,
             MobilityLevel, AccompanyDemandType, CompanionType,
             AppointmentStatus, ConfirmStatus, RiskLevel, ServiceWindow,
             ExceptionType, ExceptionStatus, DisposalPriority,
-            ResponsibleRole, ExceptionSourceType
+            ResponsibleRole, ExceptionSourceType,
+            PolicyChangeStatus, PolicyRiskLevel, PolicyImpactType,
+            WarningStatus, WarningSourceType
         )):
             return obj.value
         return super().default(obj)
@@ -467,6 +473,96 @@ class Database:
                     remark TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(exception_id) REFERENCES exception_disposal_orders(id)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS policy_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    applicable_items_json TEXT DEFAULT '[]',
+                    applicable_windows_json TEXT DEFAULT '[]',
+                    impacted_materials_json TEXT DEFAULT '[]',
+                    impacted_elder_types_json TEXT DEFAULT '[]',
+                    effective_date TEXT NOT NULL,
+                    expiry_date TEXT,
+                    policy_source TEXT NOT NULL,
+                    risk_level TEXT NOT NULL DEFAULT 'medium',
+                    handling_suggestion TEXT DEFAULT '',
+                    impact_types_json TEXT DEFAULT '[]',
+                    description TEXT DEFAULT '',
+                    added_materials_json TEXT DEFAULT '[]',
+                    removed_materials_json TEXT DEFAULT '[]',
+                    rejection_reasons_json TEXT DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_policy_status ON policy_changes(status)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_policy_risk ON policy_changes(risk_level)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_policy_effective ON policy_changes(effective_date)
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS policy_warnings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    policy_change_id INTEGER NOT NULL,
+                    policy_title TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_id INTEGER NOT NULL,
+                    source_no TEXT,
+                    item_code TEXT,
+                    item_name TEXT,
+                    elder_name TEXT,
+                    elder_type TEXT,
+                    community TEXT,
+                    expected_window TEXT,
+                    appointment_date TEXT,
+                    risk_level TEXT NOT NULL DEFAULT 'medium',
+                    status TEXT NOT NULL DEFAULT 'unconfirmed',
+                    impact_details_json TEXT DEFAULT '[]',
+                    confirmed_at TEXT,
+                    confirmed_by TEXT,
+                    confirm_remark TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(policy_change_id) REFERENCES policy_changes(id)
+                )
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pw_policy_id ON policy_warnings(policy_change_id)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pw_status ON policy_warnings(status)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pw_source ON policy_warnings(source_type, source_id)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pw_item ON policy_warnings(item_code)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pw_risk ON policy_warnings(risk_level)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pw_community ON policy_warnings(community)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pw_window ON policy_warnings(expected_window)
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS policy_warning_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    warning_id INTEGER NOT NULL,
+                    from_status TEXT,
+                    to_status TEXT NOT NULL,
+                    operator TEXT NOT NULL,
+                    remark TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(warning_id) REFERENCES policy_warnings(id)
                 )
             """)
 
@@ -3385,3 +3481,917 @@ def db_get_exception_stats(
 
 
 Database.get_exception_stats = db_get_exception_stats
+
+
+def _row_to_policy_change(row: sqlite3.Row) -> PolicyChange:
+    return PolicyChange(
+        id=row["id"],
+        title=row["title"],
+        applicable_items=json.loads(row["applicable_items_json"]) if row["applicable_items_json"] else [],
+        applicable_windows=json.loads(row["applicable_windows_json"]) if row["applicable_windows_json"] else [],
+        impacted_materials=json.loads(row["impacted_materials_json"]) if row["impacted_materials_json"] else [],
+        impacted_elder_types=json.loads(row["impacted_elder_types_json"]) if row["impacted_elder_types_json"] else [],
+        effective_date=row["effective_date"],
+        expiry_date=row["expiry_date"],
+        policy_source=row["policy_source"],
+        risk_level=row["risk_level"],
+        handling_suggestion=row["handling_suggestion"],
+        impact_types=json.loads(row["impact_types_json"]) if row["impact_types_json"] else [],
+        description=row["description"],
+        added_materials=json.loads(row["added_materials_json"]) if row["added_materials_json"] else [],
+        removed_materials=json.loads(row["removed_materials_json"]) if row["removed_materials_json"] else [],
+        rejection_reasons=json.loads(row["rejection_reasons_json"]) if row["rejection_reasons_json"] else [],
+        status=row["status"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"])
+    )
+
+
+def _row_to_policy_warning(row: sqlite3.Row) -> PolicyWarning:
+    return PolicyWarning(
+        id=row["id"],
+        policy_change_id=row["policy_change_id"],
+        policy_title=row["policy_title"],
+        source_type=row["source_type"],
+        source_id=row["source_id"],
+        source_no=row["source_no"],
+        item_code=row["item_code"],
+        item_name=row["item_name"],
+        elder_name=row["elder_name"],
+        elder_type=row["elder_type"],
+        community=row["community"],
+        expected_window=row["expected_window"],
+        appointment_date=row["appointment_date"],
+        risk_level=row["risk_level"],
+        status=row["status"],
+        impact_details=json.loads(row["impact_details_json"]) if row["impact_details_json"] else [],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        confirmed_at=datetime.fromisoformat(row["confirmed_at"]) if row["confirmed_at"] else None,
+        confirmed_by=row["confirmed_by"]
+    )
+
+
+def db_create_policy_change(self, data: Dict[str, Any]) -> PolicyChange:
+    now = datetime.now().isoformat()
+    applicable_items = data.get("applicable_items", [])
+    applicable_windows = [w.value if hasattr(w, "value") else w for w in data.get("applicable_windows", [])]
+    impacted_materials = data.get("impacted_materials", [])
+    impacted_elder_types = [e.value if hasattr(e, "value") else e for e in data.get("impacted_elder_types", [])]
+    impact_types = [t.value if hasattr(t, "value") else t for t in data.get("impact_types", [])]
+    risk_level = data.get("risk_level", "medium")
+    risk_level_val = risk_level.value if hasattr(risk_level, "value") else risk_level
+    status = data.get("status", "draft")
+    status_val = status.value if hasattr(status, "value") else status
+
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO policy_changes
+            (title, applicable_items_json, applicable_windows_json, impacted_materials_json,
+             impacted_elder_types_json, effective_date, expiry_date, policy_source,
+             risk_level, handling_suggestion, impact_types_json, description,
+             added_materials_json, removed_materials_json, rejection_reasons_json,
+             status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            data["title"],
+            json.dumps(applicable_items, cls=DictEncoder, ensure_ascii=False),
+            json.dumps(applicable_windows, cls=DictEncoder, ensure_ascii=False),
+            json.dumps(impacted_materials, ensure_ascii=False),
+            json.dumps(impacted_elder_types, cls=DictEncoder, ensure_ascii=False),
+            data["effective_date"],
+            data.get("expiry_date"),
+            data["policy_source"],
+            risk_level_val,
+            data.get("handling_suggestion", ""),
+            json.dumps(impact_types, cls=DictEncoder, ensure_ascii=False),
+            data.get("description", ""),
+            json.dumps(data.get("added_materials", []), cls=DictEncoder, ensure_ascii=False),
+            json.dumps(data.get("removed_materials", []), cls=DictEncoder, ensure_ascii=False),
+            json.dumps(data.get("rejection_reasons", []), ensure_ascii=False),
+            status_val,
+            now, now
+        ))
+        new_id = c.lastrowid
+        c.execute("SELECT * FROM policy_changes WHERE id = ?", (new_id,))
+        return _row_to_policy_change(c.fetchone())
+
+
+Database.create_policy_change = db_create_policy_change
+
+
+def db_get_policy_change(self, policy_id: int) -> Optional[PolicyChange]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM policy_changes WHERE id = ?", (policy_id,))
+        row = c.fetchone()
+        return _row_to_policy_change(row) if row else None
+
+
+Database.get_policy_change = db_get_policy_change
+
+
+def db_list_policy_changes(
+    self,
+    item_code: Optional[str] = None,
+    expected_window: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    keyword: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20
+) -> Dict[str, Any]:
+    sql = "SELECT * FROM policy_changes WHERE 1=1"
+    count_sql = "SELECT COUNT(*) as cnt FROM policy_changes WHERE 1=1"
+    params = []
+    count_params = []
+
+    if item_code:
+        sql += " AND applicable_items_json LIKE ?"
+        count_sql += " AND applicable_items_json LIKE ?"
+        like_val = f'%"{item_code}"%'
+        params.append(like_val)
+        count_params.append(like_val)
+
+    if expected_window:
+        sql += " AND applicable_windows_json LIKE ?"
+        count_sql += " AND applicable_windows_json LIKE ?"
+        like_val = f'%"{expected_window}"%'
+        params.append(like_val)
+        count_params.append(like_val)
+
+    if risk_level:
+        sql += " AND risk_level = ?"
+        count_sql += " AND risk_level = ?"
+        params.append(risk_level)
+        count_params.append(risk_level)
+
+    if status:
+        sql += " AND status = ?"
+        count_sql += " AND status = ?"
+        params.append(status)
+        count_params.append(status)
+
+    if start_date:
+        sql += " AND date(effective_date) >= date(?)"
+        count_sql += " AND date(effective_date) >= date(?)"
+        params.append(start_date)
+        count_params.append(start_date)
+
+    if end_date:
+        sql += " AND date(effective_date) <= date(?)"
+        count_sql += " AND date(effective_date) <= date(?)"
+        params.append(end_date)
+        count_params.append(end_date)
+
+    if keyword:
+        sql += " AND (title LIKE ? OR description LIKE ? OR policy_source LIKE ?)"
+        count_sql += " AND (title LIKE ? OR description LIKE ? OR policy_source LIKE ?)"
+        like_keyword = f"%{keyword}%"
+        params.extend([like_keyword, like_keyword, like_keyword])
+        count_params.extend([like_keyword, like_keyword, like_keyword])
+
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(count_sql, count_params)
+        total = c.fetchone()["cnt"] or 0
+
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        offset = (page - 1) * page_size
+        full_params = params + [page_size, offset]
+        c.execute(sql, full_params)
+        items = [_row_to_policy_change(r) for r in c.fetchall()]
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+
+Database.list_policy_changes = db_list_policy_changes
+
+
+def db_update_policy_change(
+    self,
+    policy_id: int,
+    updates_dict: Dict[str, Any]
+) -> Optional[PolicyChange]:
+    existing = self.get_policy_change(policy_id)
+    if not existing:
+        return None
+    now = datetime.now().isoformat()
+    updates = ["updated_at = ?"]
+    params = [now]
+
+    json_fields = [
+        "applicable_items", "applicable_windows", "impacted_materials",
+        "impacted_elder_types", "impact_types", "added_materials",
+        "removed_materials", "rejection_reasons"
+    ]
+
+    for key, value in updates_dict.items():
+        if value is None:
+            continue
+        if key in json_fields:
+            col = f"{key}_json"
+            updates.append(f"{col} = ?")
+            val_list = []
+            for v in value:
+                val_list.append(v.value if hasattr(v, "value") else v)
+            params.append(json.dumps(val_list, cls=DictEncoder, ensure_ascii=False))
+        elif key == "risk_level":
+            updates.append("risk_level = ?")
+            params.append(value.value if hasattr(value, "value") else value)
+        elif key == "status":
+            updates.append("status = ?")
+            params.append(value.value if hasattr(value, "value") else value)
+        elif key not in ("id", "created_at"):
+            updates.append(f"{key} = ?")
+            params.append(value)
+
+    params.append(policy_id)
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(f"UPDATE policy_changes SET {', '.join(updates)} WHERE id = ?", params)
+    return self.get_policy_change(policy_id)
+
+
+Database.update_policy_change = db_update_policy_change
+
+
+def db_delete_policy_change(self, policy_id: int) -> bool:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM policy_warnings WHERE policy_change_id = ?", (policy_id,))
+        c.execute("DELETE FROM policy_changes WHERE id = ?", (policy_id,))
+        return c.rowcount > 0
+
+
+Database.delete_policy_change = db_delete_policy_change
+
+
+def db_scan_policy_impact(self, policy_id: int) -> Dict[str, Any]:
+    policy = self.get_policy_change(policy_id)
+    if not policy:
+        return {"error": "政策变更不存在"}
+
+    applicable_items = policy.applicable_items
+    applicable_windows = policy.applicable_windows
+    impacted_elder_types = policy.impacted_elder_types
+
+    scan_results = {
+        "verify_records": {"count": 0, "ids": []},
+        "pre_review_orders": {"count": 0, "ids": []},
+        "accompany_appointments": {"count": 0, "ids": []},
+        "exception_orders": {"count": 0, "ids": []},
+        "service_items": {"count": 0, "ids": []}
+    }
+
+    new_warnings_count = 0
+
+    with self._connect() as conn:
+        c = conn.cursor()
+
+        item_placeholders = ",".join(["?"] * len(applicable_items)) if applicable_items else ""
+
+        if applicable_items:
+            v_sql = "SELECT id, item_code, item_name, elder_type, is_pass, created_at FROM verification_history WHERE item_code IN ({})".format(item_placeholders)
+            v_params = list(applicable_items)
+            if impacted_elder_types:
+                v_sql += " AND elder_type IN ({})".format(",".join(["?"] * len(impacted_elder_types)))
+                v_params.extend(impacted_elder_types)
+            c.execute(v_sql, v_params)
+            verify_rows = c.fetchall()
+            scan_results["verify_records"]["count"] = len(verify_rows)
+            scan_results["verify_records"]["ids"] = [r["id"] for r in verify_rows]
+
+            for row in verify_rows:
+                c.execute("""
+                    SELECT id FROM policy_warnings
+                    WHERE policy_change_id = ? AND source_type = 'verify_record' AND source_id = ?
+                """, (policy_id, row["id"]))
+                if not c.fetchone():
+                    impact_details = [{
+                        "type": "material_change",
+                        "description": f"政策变更影响 {row['item_name']} 的材料要求"
+                    }]
+                    c.execute("""
+                        INSERT INTO policy_warnings
+                        (policy_change_id, policy_title, source_type, source_id, source_no,
+                         item_code, item_name, elder_name, elder_type, community,
+                         expected_window, appointment_date, risk_level, status,
+                         impact_details_json, created_at)
+                        VALUES (?, ?, 'verify_record', ?, NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, 'unconfirmed', ?, ?)
+                    """, (
+                        policy_id, policy.title, row["id"],
+                        row["item_code"], row["item_name"], row["elder_type"],
+                        policy.risk_level,
+                        json.dumps(impact_details, ensure_ascii=False),
+                        datetime.now().isoformat()
+                    ))
+                    new_warnings_count += 1
+
+            pr_sql = "SELECT id, work_order_no, item_code, item_name, elder_type, elder_name, expected_window, appointment_date, status FROM pre_review_orders WHERE item_code IN ({}) AND status NOT IN ('completed', 'expired', 'rejected')".format(item_placeholders)
+            pr_params = list(applicable_items)
+            if impacted_elder_types:
+                pr_sql += " AND elder_type IN ({})".format(",".join(["?"] * len(impacted_elder_types)))
+                pr_params.extend(impacted_elder_types)
+            if applicable_windows:
+                pr_sql += " AND expected_window IN ({})".format(",".join(["?"] * len(applicable_windows)))
+                pr_params.extend(applicable_windows)
+            c.execute(pr_sql, pr_params)
+            pr_rows = c.fetchall()
+            scan_results["pre_review_orders"]["count"] = len(pr_rows)
+            scan_results["pre_review_orders"]["ids"] = [r["id"] for r in pr_rows]
+
+            for row in pr_rows:
+                c.execute("""
+                    SELECT id FROM policy_warnings
+                    WHERE policy_change_id = ? AND source_type = 'pre_review_order' AND source_id = ?
+                """, (policy_id, row["id"]))
+                if not c.fetchone():
+                    impact_details = [
+                        {"type": "material_change", "description": f"政策变更影响 {row['item_name']} 的材料要求，建议重新预审"},
+                        {"type": "suggestion", "description": policy.handling_suggestion}
+                    ]
+                    c.execute("""
+                        INSERT INTO policy_warnings
+                        (policy_change_id, policy_title, source_type, source_id, source_no,
+                         item_code, item_name, elder_name, elder_type, community,
+                         expected_window, appointment_date, risk_level, status,
+                         impact_details_json, created_at)
+                        VALUES (?, ?, 'pre_review_order', ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'unconfirmed', ?, ?)
+                    """, (
+                        policy_id, policy.title, row["id"], row["work_order_no"],
+                        row["item_code"], row["item_name"], row["elder_name"], row["elder_type"],
+                        row["expected_window"] or "", row["appointment_date"] or "",
+                        policy.risk_level,
+                        json.dumps(impact_details, ensure_ascii=False),
+                        datetime.now().isoformat()
+                    ))
+                    new_warnings_count += 1
+
+            aa_sql = "SELECT id, appointment_no, item_code, item_name, elder_type, elder_name, expected_window, expected_date, community, status FROM accompany_appointments WHERE item_code IN ({}) AND status NOT IN ('completed', 'cancelled', 'no_show')".format(item_placeholders)
+            aa_params = list(applicable_items)
+            if impacted_elder_types:
+                aa_sql += " AND elder_type IN ({})".format(",".join(["?"] * len(impacted_elder_types)))
+                aa_params.extend(impacted_elder_types)
+            if applicable_windows:
+                aa_sql += " AND expected_window IN ({})".format(",".join(["?"] * len(applicable_windows)))
+                aa_params.extend(applicable_windows)
+            c.execute(aa_sql, aa_params)
+            aa_rows = c.fetchall()
+            scan_results["accompany_appointments"]["count"] = len(aa_rows)
+            scan_results["accompany_appointments"]["ids"] = [r["id"] for r in aa_rows]
+
+            for row in aa_rows:
+                c.execute("""
+                    SELECT id FROM policy_warnings
+                    WHERE policy_change_id = ? AND source_type = 'accompany_appointment' AND source_id = ?
+                """, (policy_id, row["id"]))
+                if not c.fetchone():
+                    impact_details = [
+                        {"type": "material_change", "description": f"政策变更影响 {row['item_name']} 的材料要求，建议重新预约或补充材料"},
+                        {"type": "suggestion", "description": policy.handling_suggestion}
+                    ]
+                    c.execute("""
+                        INSERT INTO policy_warnings
+                        (policy_change_id, policy_title, source_type, source_id, source_no,
+                         item_code, item_name, elder_name, elder_type, community,
+                         expected_window, appointment_date, risk_level, status,
+                         impact_details_json, created_at)
+                        VALUES (?, ?, 'accompany_appointment', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unconfirmed', ?, ?)
+                    """, (
+                        policy_id, policy.title, row["id"], row["appointment_no"],
+                        row["item_code"], row["item_name"], row["elder_name"], row["elder_type"],
+                        row["community"] or "", row["expected_window"] or "", row["expected_date"] or "",
+                        policy.risk_level,
+                        json.dumps(impact_details, ensure_ascii=False),
+                        datetime.now().isoformat()
+                    ))
+                    new_warnings_count += 1
+
+            exc_sql = "SELECT id, exception_no, item_code, item_name, elder_name, elder_type, expected_window, community, status FROM exception_disposal_orders WHERE item_code IN ({}) AND status NOT IN ('closed')".format(item_placeholders)
+            exc_params = list(applicable_items)
+            if applicable_windows:
+                exc_sql += " AND expected_window IN ({})".format(",".join(["?"] * len(applicable_windows)))
+                exc_params.extend(applicable_windows)
+            c.execute(exc_sql, exc_params)
+            exc_rows = c.fetchall()
+            scan_results["exception_orders"]["count"] = len(exc_rows)
+            scan_results["exception_orders"]["ids"] = [r["id"] for r in exc_rows]
+
+            for row in exc_rows:
+                c.execute("""
+                    SELECT id FROM policy_warnings
+                    WHERE policy_change_id = ? AND source_type = 'exception_order' AND source_id = ?
+                """, (policy_id, row["id"]))
+                if not c.fetchone():
+                    impact_details = [
+                        {"type": "process_change", "description": f"政策变更可能影响异常处置流程"},
+                        {"type": "suggestion", "description": policy.handling_suggestion}
+                    ]
+                    c.execute("""
+                        INSERT INTO policy_warnings
+                        (policy_change_id, policy_title, source_type, source_id, source_no,
+                         item_code, item_name, elder_name, elder_type, community,
+                         expected_window, appointment_date, risk_level, status,
+                         impact_details_json, created_at)
+                        VALUES (?, ?, 'exception_order', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'unconfirmed', ?, ?)
+                    """, (
+                        policy_id, policy.title, row["id"], row["exception_no"],
+                        row["item_code"] or "", row["item_name"] or "",
+                        row["elder_name"] or "", row["elder_type"] or "",
+                        row["community"] or "", row["expected_window"] or "",
+                        policy.risk_level,
+                        json.dumps(impact_details, ensure_ascii=False),
+                        datetime.now().isoformat()
+                    ))
+                    new_warnings_count += 1
+
+            si_sql = "SELECT id, item_code, item_name FROM service_items WHERE item_code IN ({}) AND enabled = 1".format(item_placeholders)
+            c.execute(si_sql, list(applicable_items))
+            si_rows = c.fetchall()
+            scan_results["service_items"]["count"] = len(si_rows)
+            scan_results["service_items"]["ids"] = [r["id"] for r in si_rows]
+
+    total_affected = sum(v["count"] for v in scan_results.values())
+
+    return {
+        "policy_change_id": policy_id,
+        "policy_title": policy.title,
+        "scanned_sources": scan_results,
+        "new_warnings_count": new_warnings_count,
+        "total_affected_count": total_affected
+    }
+
+
+Database.scan_policy_impact = db_scan_policy_impact
+
+
+def db_list_policy_warnings(
+    self,
+    policy_change_id: Optional[int] = None,
+    source_type: Optional[str] = None,
+    item_code: Optional[str] = None,
+    community: Optional[str] = None,
+    expected_window: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    status: Optional[str] = None,
+    elder_name: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20
+) -> Dict[str, Any]:
+    sql = "SELECT * FROM policy_warnings WHERE 1=1"
+    count_sql = "SELECT COUNT(*) as cnt FROM policy_warnings WHERE 1=1"
+    params = []
+    count_params = []
+
+    if policy_change_id is not None:
+        sql += " AND policy_change_id = ?"
+        count_sql += " AND policy_change_id = ?"
+        params.append(policy_change_id)
+        count_params.append(policy_change_id)
+
+    if source_type:
+        sql += " AND source_type = ?"
+        count_sql += " AND source_type = ?"
+        params.append(source_type)
+        count_params.append(source_type)
+
+    if item_code:
+        sql += " AND item_code = ?"
+        count_sql += " AND item_code = ?"
+        params.append(item_code)
+        count_params.append(item_code)
+
+    if community:
+        sql += " AND community = ?"
+        count_sql += " AND community = ?"
+        params.append(community)
+        count_params.append(community)
+
+    if expected_window:
+        sql += " AND expected_window = ?"
+        count_sql += " AND expected_window = ?"
+        params.append(expected_window)
+        count_params.append(expected_window)
+
+    if risk_level:
+        sql += " AND risk_level = ?"
+        count_sql += " AND risk_level = ?"
+        params.append(risk_level)
+        count_params.append(risk_level)
+
+    if status:
+        sql += " AND status = ?"
+        count_sql += " AND status = ?"
+        params.append(status)
+        count_params.append(status)
+
+    if elder_name:
+        sql += " AND elder_name LIKE ?"
+        count_sql += " AND elder_name LIKE ?"
+        like_val = f"%{elder_name}%"
+        params.append(like_val)
+        count_params.append(like_val)
+
+    if start_date:
+        sql += " AND date(created_at) >= date(?)"
+        count_sql += " AND date(created_at) >= date(?)"
+        params.append(start_date)
+        count_params.append(start_date)
+
+    if end_date:
+        sql += " AND date(created_at) <= date(?)"
+        count_sql += " AND date(created_at) <= date(?)"
+        params.append(end_date)
+        count_params.append(end_date)
+
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute(count_sql, count_params)
+        total = c.fetchone()["cnt"] or 0
+
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        offset = (page - 1) * page_size
+        full_params = params + [page_size, offset]
+        c.execute(sql, full_params)
+        items = [_row_to_policy_warning(r) for r in c.fetchall()]
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+
+Database.list_policy_warnings = db_list_policy_warnings
+
+
+def db_get_policy_warning(self, warning_id: int) -> Optional[PolicyWarning]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM policy_warnings WHERE id = ?", (warning_id,))
+        row = c.fetchone()
+        return _row_to_policy_warning(row) if row else None
+
+
+Database.get_policy_warning = db_get_policy_warning
+
+
+def db_confirm_policy_warning(
+    self,
+    warning_id: int,
+    confirmed_by: str,
+    confirm_remark: Optional[str] = None
+) -> Optional[PolicyWarning]:
+    existing = self.get_policy_warning(warning_id)
+    if not existing:
+        return None
+    now = datetime.now().isoformat()
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO policy_warning_history
+            (warning_id, from_status, to_status, operator, remark, created_at)
+            VALUES (?, ?, 'confirmed', ?, ?, ?)
+        """, (warning_id, existing.status, confirmed_by, confirm_remark or "", now))
+        c.execute("""
+            UPDATE policy_warnings
+            SET status = 'confirmed', confirmed_at = ?, confirmed_by = ?, confirm_remark = ?
+            WHERE id = ?
+        """, (now, confirmed_by, confirm_remark or "", warning_id))
+    return self.get_policy_warning(warning_id)
+
+
+Database.confirm_policy_warning = db_confirm_policy_warning
+
+
+def db_get_policy_warning_history(self, warning_id: int) -> List[Dict[str, Any]]:
+    with self._connect() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM policy_warning_history
+            WHERE warning_id = ? ORDER BY created_at ASC
+        """, (warning_id,))
+        history = []
+        for r in c.fetchall():
+            history.append({
+                "id": r["id"],
+                "warning_id": r["warning_id"],
+                "from_status": r["from_status"],
+                "to_status": r["to_status"],
+                "operator": r["operator"],
+                "remark": r["remark"],
+                "created_at": r["created_at"]
+            })
+        return history
+
+
+Database.get_policy_warning_history = db_get_policy_warning_history
+
+
+def db_get_policy_stats(
+    self,
+    item_code: Optional[str] = None,
+    community: Optional[str] = None,
+    expected_window: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> Dict[str, Any]:
+    with self._connect() as conn:
+        c = conn.cursor()
+
+        policy_sql = "SELECT COUNT(*) as cnt FROM policy_changes WHERE 1=1"
+        policy_params = []
+
+        active_sql = "SELECT COUNT(*) as cnt FROM policy_changes WHERE status = 'active'"
+        active_params = []
+
+        if start_date:
+            policy_sql += " AND date(created_at) >= date(?)"
+            active_sql += " AND date(created_at) >= date(?)"
+            policy_params.append(start_date)
+            active_params.append(start_date)
+        if end_date:
+            policy_sql += " AND date(created_at) <= date(?)"
+            active_sql += " AND date(created_at) <= date(?)"
+            policy_params.append(end_date)
+            active_params.append(end_date)
+
+        c.execute(policy_sql, policy_params)
+        total_policy_changes = c.fetchone()["cnt"] or 0
+
+        c.execute(active_sql, active_params)
+        active_policy_count = c.fetchone()["cnt"] or 0
+
+        warn_sql = "SELECT COUNT(*) as cnt FROM policy_warnings WHERE 1=1"
+        warn_params = []
+        confirmed_sql = "SELECT COUNT(*) as cnt FROM policy_warnings WHERE status = 'confirmed'"
+        confirmed_params = []
+        high_risk_sql = "SELECT COUNT(*) as cnt FROM policy_warnings WHERE status = 'unconfirmed' AND risk_level IN ('high', 'critical')"
+        high_risk_params = []
+
+        if item_code:
+            warn_sql += " AND item_code = ?"
+            confirmed_sql += " AND item_code = ?"
+            high_risk_sql += " AND item_code = ?"
+            warn_params.append(item_code)
+            confirmed_params.append(item_code)
+            high_risk_params.append(item_code)
+        if community:
+            warn_sql += " AND community = ?"
+            confirmed_sql += " AND community = ?"
+            high_risk_sql += " AND community = ?"
+            warn_params.append(community)
+            confirmed_params.append(community)
+            high_risk_params.append(community)
+        if expected_window:
+            warn_sql += " AND expected_window = ?"
+            confirmed_sql += " AND expected_window = ?"
+            high_risk_sql += " AND expected_window = ?"
+            warn_params.append(expected_window)
+            confirmed_params.append(expected_window)
+            high_risk_params.append(expected_window)
+        if start_date:
+            warn_sql += " AND date(created_at) >= date(?)"
+            confirmed_sql += " AND date(created_at) >= date(?)"
+            high_risk_sql += " AND date(created_at) >= date(?)"
+            warn_params.append(start_date)
+            confirmed_params.append(start_date)
+            high_risk_params.append(start_date)
+        if end_date:
+            warn_sql += " AND date(created_at) <= date(?)"
+            confirmed_sql += " AND date(created_at) <= date(?)"
+            high_risk_sql += " AND date(created_at) <= date(?)"
+            warn_params.append(end_date)
+            confirmed_params.append(end_date)
+            high_risk_params.append(end_date)
+
+        c.execute(warn_sql, warn_params)
+        total_warnings = c.fetchone()["cnt"] or 0
+
+        c.execute(confirmed_sql, confirmed_params)
+        confirmed_warnings = c.fetchone()["cnt"] or 0
+
+        c.execute(high_risk_sql, high_risk_params)
+        unconfirmed_high_risk = c.fetchone()["cnt"] or 0
+
+        rank_sql = """
+            SELECT pw.item_code, pw.item_name,
+                   COUNT(*) as warning_count
+            FROM policy_warnings pw
+            WHERE 1=1
+        """
+        rank_params = []
+        if item_code:
+            rank_sql += " AND pw.item_code = ?"
+            rank_params.append(item_code)
+        if community:
+            rank_sql += " AND pw.community = ?"
+            rank_params.append(community)
+        if expected_window:
+            rank_sql += " AND pw.expected_window = ?"
+            rank_params.append(expected_window)
+        if start_date:
+            rank_sql += " AND date(pw.created_at) >= date(?)"
+            rank_params.append(start_date)
+        if end_date:
+            rank_sql += " AND date(pw.created_at) <= date(?)"
+            rank_params.append(end_date)
+        rank_sql += " GROUP BY pw.item_code ORDER BY warning_count DESC LIMIT 10"
+        c.execute(rank_sql, rank_params)
+        item_ranking = []
+        rank = 0
+        for r in c.fetchall():
+            rank += 1
+            item_ranking.append({
+                "rank": rank,
+                "item_code": r["item_code"] or "",
+                "item_name": r["item_name"] or "",
+                "warning_count": r["warning_count"] or 0
+            })
+
+        total_exc_sql = "SELECT COUNT(*) as cnt FROM exception_disposal_orders WHERE 1=1"
+        total_exc_params = []
+        policy_exc_sql = "SELECT COUNT(*) as cnt FROM exception_disposal_orders WHERE exception_type = 'policy_changed'"
+        policy_exc_params = []
+
+        if item_code:
+            total_exc_sql += " AND item_code = ?"
+            policy_exc_sql += " AND item_code = ?"
+            total_exc_params.append(item_code)
+            policy_exc_params.append(item_code)
+        if start_date:
+            total_exc_sql += " AND date(created_at) >= date(?)"
+            policy_exc_sql += " AND date(created_at) >= date(?)"
+            total_exc_params.append(start_date)
+            policy_exc_params.append(start_date)
+        if end_date:
+            total_exc_sql += " AND date(created_at) <= date(?)"
+            policy_exc_sql += " AND date(created_at) <= date(?)"
+            total_exc_params.append(end_date)
+            policy_exc_params.append(end_date)
+
+        c.execute(total_exc_sql, total_exc_params)
+        total_exceptions = c.fetchone()["cnt"] or 0
+
+        c.execute(policy_exc_sql, policy_exc_params)
+        policy_exception_count = c.fetchone()["cnt"] or 0
+
+        policy_exception_ratio = round(policy_exception_count / total_exceptions, 4) if total_exceptions > 0 else 0.0
+
+    return {
+        "total_policy_changes": total_policy_changes,
+        "active_policy_count": active_policy_count,
+        "total_warnings": total_warnings,
+        "confirmed_warnings": confirmed_warnings,
+        "unconfirmed_high_risk_warnings": unconfirmed_high_risk,
+        "item_policy_impact_ranking": item_ranking,
+        "policy_exception_ratio": policy_exception_ratio,
+        "policy_exception_count": policy_exception_count,
+        "total_exceptions": total_exceptions
+    }
+
+
+Database.get_policy_stats = db_get_policy_stats
+
+
+def db_query_policy_impact(
+    self,
+    elder_type: Optional[str] = None,
+    item_code: Optional[str] = None,
+    community: Optional[str] = None,
+    expected_window: Optional[str] = None,
+    appointment_date: Optional[str] = None
+) -> Dict[str, Any]:
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    with self._connect() as conn:
+        c = conn.cursor()
+
+        sql = """
+            SELECT * FROM policy_changes
+            WHERE status = 'active'
+              AND date(effective_date) <= date(?)
+              AND (expiry_date IS NULL OR date(expiry_date) >= date(?))
+        """
+        params = [today, today]
+
+        if item_code:
+            sql += " AND applicable_items_json LIKE ?"
+            params.append(f'%"{item_code}"%')
+
+        if expected_window:
+            sql += " AND applicable_windows_json LIKE ?"
+            params.append(f'%"{expected_window}"%')
+
+        if elder_type:
+            sql += " AND (impacted_elder_types_json = '[]' OR impacted_elder_types_json LIKE ?)"
+            params.append(f'%"{elder_type}"%')
+
+        c.execute(sql, params)
+        policies = [_row_to_policy_change(r) for r in c.fetchall()]
+
+    is_affected = len(policies) > 0
+
+    added_materials = []
+    removed_materials = []
+    rejection_reasons = []
+    suggestions = []
+    affected_policies = []
+
+    for policy in policies:
+        affected_policies.append({
+            "id": policy.id,
+            "title": policy.title,
+            "risk_level": policy.risk_level,
+            "effective_date": policy.effective_date,
+            "expiry_date": policy.expiry_date,
+            "policy_source": policy.policy_source,
+            "handling_suggestion": policy.handling_suggestion
+        })
+        added_materials.extend(policy.added_materials)
+        removed_materials.extend(policy.removed_materials)
+        rejection_reasons.extend(policy.rejection_reasons)
+        if policy.handling_suggestion:
+            suggestions.append(policy.handling_suggestion)
+
+    need_re_preview = is_affected and any(
+        t in policy.impact_types for policy in policies
+        for t in ["material_add", "material_remove", "material_modify", "eligibility_change"]
+    ) or (is_affected and item_code)
+
+    need_re_appointment = is_affected and any(
+        t in policy.impact_types for policy in policies
+        for t in ["window_change", "process_change"]
+    ) or (is_affected and appointment_date)
+
+    if is_affected and not suggestions:
+        suggestions.append("建议联系工作人员确认政策变更详情，提前准备好所需材料。")
+
+    return {
+        "is_affected": is_affected,
+        "affected_policies": affected_policies,
+        "added_materials": added_materials,
+        "removed_materials": removed_materials,
+        "rejection_reasons": rejection_reasons,
+        "suggestions": suggestions,
+        "need_re_preview": need_re_preview,
+        "need_re_appointment": need_re_appointment
+    }
+
+
+Database.query_policy_impact = db_query_policy_impact
+
+
+def db_get_policy_change_detail(self, policy_id: int) -> Optional[Dict[str, Any]]:
+    policy = self.get_policy_change(policy_id)
+    if not policy:
+        return None
+
+    warnings = self.list_policy_warnings(policy_change_id=policy_id, page=1, page_size=1)
+    warning_count = warnings["total"]
+
+    confirmed_warnings = self.list_policy_warnings(
+        policy_change_id=policy_id,
+        status="confirmed",
+        page=1,
+        page_size=1
+    )
+    confirmed_count = confirmed_warnings["total"]
+
+    source_counts = {}
+    for st in ["verify_record", "pre_review_order", "accompany_appointment", "exception_order", "service_item"]:
+        res = self.list_policy_warnings(
+            policy_change_id=policy_id,
+            source_type=st,
+            page=1,
+            page_size=1
+        )
+        source_counts[st] = res["total"]
+
+    impact_summary = {
+        "total_warnings": warning_count,
+        "confirmed_warnings": confirmed_count,
+        "unconfirmed_warnings": warning_count - confirmed_count,
+        "source_distribution": source_counts
+    }
+
+    return {
+        "policy": policy,
+        "impact_summary": impact_summary,
+        "warning_count": warning_count,
+        "confirmed_warning_count": confirmed_count
+    }
+
+
+Database.get_policy_change_detail = db_get_policy_change_detail
