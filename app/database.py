@@ -2569,41 +2569,40 @@ def _generate_disposal_plan(
     from datetime import timedelta
     now = datetime.now()
 
-    priority_scores = {
-        "p1_urgent": 0,
-        "p2_high": 0,
-        "p3_medium": 0,
-        "p4_low": 0
-    }
-
     urgent_types = ["elder_unwell", "elder_absent"]
     high_types = ["window_reject", "material_invalid", "policy_changed", "companion_late"]
     medium_types = ["supplement_fail"]
 
     if exception_type in urgent_types:
-        priority_scores["p1_urgent"] += 3
+        base_priority = "p1_urgent"
     elif exception_type in high_types:
-        priority_scores["p2_high"] += 2
+        base_priority = "p2_high"
     elif exception_type in medium_types:
-        priority_scores["p3_medium"] += 1
+        base_priority = "p3_medium"
     else:
-        priority_scores["p4_low"] += 1
+        base_priority = "p4_low"
+
+    priority_levels = {
+        "p1_urgent": 4,
+        "p2_high": 3,
+        "p3_medium": 2,
+        "p4_low": 1
+    }
+    current_level = priority_levels[base_priority]
 
     if risk_level == "critical":
-        priority_scores["p1_urgent"] += 3
+        current_level = min(current_level + 2, 4)
     elif risk_level == "high":
-        priority_scores["p2_high"] += 2
-    elif risk_level == "medium":
-        priority_scores["p3_medium"] += 1
+        current_level = min(current_level + 1, 4)
 
     if elder_type in ("special_elder", "disabled", "low_income"):
-        priority_scores["p2_high"] += 1
+        current_level = min(current_level + 1, 4)
 
     if impact_completion:
-        priority_scores["p2_high"] += 2
+        current_level = min(current_level + 1, 4)
 
-    sorted_priorities = sorted(priority_scores.items(), key=lambda x: x[1], reverse=True)
-    priority = sorted_priorities[0][0]
+    level_to_priority = {v: k for k, v in priority_levels.items()}
+    priority = level_to_priority[current_level]
 
     deadline_hours = {
         "p1_urgent": 1,
@@ -2713,9 +2712,35 @@ def _fetch_source_info(self, source_type: str, source_id: int) -> Optional[Dict[
 Database._fetch_source_info = _fetch_source_info
 
 
+def _check_source_exists(self, source_type: str, source_id: int) -> bool:
+    with self._connect() as conn:
+        c = conn.cursor()
+        if source_type == "verify_record":
+            c.execute("SELECT id FROM verification_history WHERE id = ?", (source_id,))
+        elif source_type == "pre_review_order":
+            c.execute("SELECT id FROM pre_review_orders WHERE id = ?", (source_id,))
+        elif source_type == "accompany_appointment":
+            c.execute("SELECT id FROM accompany_appointments WHERE id = ?", (source_id,))
+        else:
+            return False
+        return c.fetchone() is not None
+
+
+Database.check_source_exists = _check_source_exists
+
+
 def db_create_exception(self, data: Dict[str, Any]) -> ExceptionDisposalOrder:
     source_type = data["source_type"].value if hasattr(data["source_type"], "value") else data["source_type"]
     source_id = data["source_id"]
+
+    if not self.check_source_exists(source_type, source_id):
+        type_names = {
+            "verify_record": "材料校验记录",
+            "pre_review_order": "预审工单",
+            "accompany_appointment": "陪同预约单"
+        }
+        type_name = type_names.get(source_type, source_type)
+        raise ValueError(f"关联的{type_name}(ID={source_id})不存在")
 
     item_code = None
     item_name = None
@@ -2926,6 +2951,10 @@ def db_update_exception_status(
     existing = self.get_exception(exception_id)
     if not existing:
         return None
+    if existing.status == "closed":
+        raise ValueError("已关闭的异常单不允许状态变更")
+    if status == "pending" and existing.status != "pending":
+        raise ValueError("不能将已进入处置流程的异常单改回待处理状态")
     from_status = existing.status
     now = datetime.now()
     with self._connect() as conn:
@@ -2956,6 +2985,8 @@ def db_assign_exception(
     existing = self.get_exception(exception_id)
     if not existing:
         return None
+    if existing.status == "closed":
+        raise ValueError("已关闭的异常单不允许指派责任人")
     now = datetime.now()
     updates = [
         "responsible_person = ?",
@@ -3000,6 +3031,8 @@ def db_add_processing_record(
     existing = self.get_exception(exception_id)
     if not existing:
         return None
+    if existing.status == "closed":
+        raise ValueError("已关闭的异常单不允许追加处理记录")
     now = datetime.now()
     new_id = None
     with self._connect() as conn:
@@ -3177,8 +3210,11 @@ def db_get_exception_stats(
         total_verify = c.fetchone()["cnt"] or 0
         c.execute(pr_sql, p_params)
         total_pr = c.fetchone()["cnt"] or 0
-        total_transactions = total_verify + total_pr
-        exception_rate = round(total_exceptions / total_transactions, 4) if total_transactions > 0 else 0.0
+        c.execute(acc_sql, a_params)
+        total_acc_for_rate = c.fetchone()["cnt"] or 0
+        total_transactions = total_verify + total_pr + total_acc_for_rate
+        raw_rate = (total_exceptions / total_transactions) if total_transactions > 0 else 0.0
+        exception_rate = round(min(raw_rate, 1.0), 4)
 
         item_rank_sql = """
             SELECT si.item_code, si.item_name,
@@ -3209,34 +3245,44 @@ def db_get_exception_stats(
             exc_cnt = r["exc_cnt"] or 0
             item_total_sql = "SELECT COUNT(*) as cnt FROM (" \
                              "SELECT id FROM verification_history WHERE item_code = ? " \
-                             "UNION ALL SELECT id FROM pre_review_orders WHERE item_code = ?" \
+                             "UNION ALL SELECT id FROM pre_review_orders WHERE item_code = ? " \
+                             "UNION ALL SELECT id FROM accompany_appointments WHERE item_code = ?" \
                              ") t"
-            t_params = [r["item_code"], r["item_code"]]
+            t_params = [r["item_code"], r["item_code"], r["item_code"]]
             if start_date or end_date:
                 item_total_sql = "SELECT COUNT(*) as cnt FROM (" \
                                  "SELECT id FROM verification_history WHERE item_code = ? {date_clause_v}" \
                                  " UNION ALL SELECT id FROM pre_review_orders WHERE item_code = ? {date_clause_pr}" \
+                                 " UNION ALL SELECT id FROM accompany_appointments WHERE item_code = ? {date_clause_acc}" \
                                  ") t"
                 date_clause_v = ""
                 date_clause_pr = ""
+                date_clause_acc = ""
                 extra_params = []
                 if start_date:
                     date_clause_v += " AND date(created_at) >= date(?)"
                     date_clause_pr += " AND date(created_at) >= date(?)"
-                    extra_params.extend([start_date, start_date])
+                    date_clause_acc += " AND date(created_at) >= date(?)"
+                    extra_params.extend([start_date, start_date, start_date])
                 if end_date:
                     date_clause_v += " AND date(created_at) <= date(?)"
                     date_clause_pr += " AND date(created_at) <= date(?)"
-                    extra_params.extend([end_date, end_date])
-                item_total_sql = item_total_sql.format(date_clause_v=date_clause_v, date_clause_pr=date_clause_pr)
+                    date_clause_acc += " AND date(created_at) <= date(?)"
+                    extra_params.extend([end_date, end_date, end_date])
+                item_total_sql = item_total_sql.format(
+                    date_clause_v=date_clause_v,
+                    date_clause_pr=date_clause_pr,
+                    date_clause_acc=date_clause_acc
+                )
                 t_params.extend(extra_params)
             c.execute(item_total_sql, t_params)
             item_total = c.fetchone()["cnt"] or 0
+            raw_item_rate = (exc_cnt / item_total) if item_total > 0 else 0.0
             item_exception_ranking.append(ExceptionStatsItemRank(
                 item_code=r["item_code"],
                 item_name=r["item_name"],
                 exception_count=exc_cnt,
-                exception_rate=round(exc_cnt / item_total, 4) if item_total > 0 else 0.0,
+                exception_rate=round(min(raw_item_rate, 1.0), 4),
                 rank=rank
             ))
 
@@ -3313,7 +3359,11 @@ def db_get_exception_stats(
 
         c.execute(acc_sql, a_params)
         accompany_total = c.fetchone()["cnt"] or 0
-        accompany_exception_rate = round(accompany_exception_count / accompany_total, 4) if accompany_total > 0 else 0.0
+        raw_acc_rate = (accompany_exception_count / accompany_total) if accompany_total > 0 else 0.0
+        accompany_exception_rate = round(min(raw_acc_rate, 1.0), 4)
+
+        raw_timeout_rate = (timeout_count / total_exceptions) if total_exceptions > 0 else 0.0
+        timeout_rate = round(min(raw_timeout_rate, 1.0), 4)
 
     overall = ExceptionStatsOverall(
         total_exceptions=total_exceptions,

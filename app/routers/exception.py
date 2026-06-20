@@ -25,6 +25,17 @@ def ok(data=None, message="success") -> UniformResponse:
 
 @router.post("", response_model=UniformResponse, summary="上报异常事件并自动生成处置单")
 def create_exception(request: ExceptionCreateRequest):
+    source_type_val = request.source_type.value if hasattr(request.source_type, "value") else request.source_type
+    source_id_val = request.source_id
+    source_type_names = {
+        "verify_record": "材料校验记录",
+        "pre_review_order": "预审工单",
+        "accompany_appointment": "陪同预约单"
+    }
+    exists = _db.check_source_exists(source_type_val, source_id_val)
+    if not exists:
+        type_name = source_type_names.get(source_type_val, source_type_val)
+        raise HTTPException(status_code=404, detail=f"关联的{type_name}(ID={source_id_val})不存在，请检查source_id是否正确")
     try:
         req_dict = request.model_dump()
         req_dict["exception_type"] = request.exception_type
@@ -98,15 +109,23 @@ def update_exception_status(exception_id: int, request: ExceptionStatusUpdateReq
     existing = _db.get_exception(exception_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"异常ID {exception_id} 不存在")
-    updated = _db.update_exception_status(
-        exception_id=exception_id,
-        status=request.status.value,
-        operator=request.operator,
-        remark=request.remark
-    )
+    if existing.status == "closed":
+        raise HTTPException(status_code=400, detail="已关闭的异常单不允许状态变更，如需修改请先重新开启")
+    new_status = request.status.value
+    if new_status == "pending" and existing.status not in ("pending",):
+        raise HTTPException(status_code=400, detail="不能将已进入处置流程的异常单改回待处理状态")
+    try:
+        updated = _db.update_exception_status(
+            exception_id=exception_id,
+            status=new_status,
+            operator=request.operator,
+            remark=request.remark
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return ok(
         data=updated.model_dump(mode="json") if updated else None,
-        message=f"异常状态已更新为 {request.status.value}"
+        message=f"异常状态已更新为 {new_status}"
     )
 
 
@@ -115,14 +134,19 @@ def assign_exception(exception_id: int, request: ExceptionAssignRequest):
     existing = _db.get_exception(exception_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"异常ID {exception_id} 不存在")
-    updated = _db.assign_exception(
-        exception_id=exception_id,
-        responsible_role=request.responsible_role.value if request.responsible_role else None,
-        responsible_person=request.responsible_person,
-        responsible_phone=request.responsible_phone,
-        assigned_by=request.assigned_by,
-        assign_remark=request.assign_remark
-    )
+    if existing.status == "closed":
+        raise HTTPException(status_code=400, detail="已关闭的异常单不允许指派责任人，如需修改请先重新开启")
+    try:
+        updated = _db.assign_exception(
+            exception_id=exception_id,
+            responsible_role=request.responsible_role.value if request.responsible_role else None,
+            responsible_person=request.responsible_person,
+            responsible_phone=request.responsible_phone,
+            assigned_by=request.assigned_by,
+            assign_remark=request.assign_remark
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return ok(
         data=updated.model_dump(mode="json") if updated else None,
         message=f"已指派责任人：{request.responsible_person}"
@@ -134,14 +158,19 @@ def add_processing_record(exception_id: int, request: ExceptionProcessingRecordC
     existing = _db.get_exception(exception_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"异常ID {exception_id} 不存在")
-    record = _db.add_processing_record(
-        exception_id=exception_id,
-        processor=request.processor,
-        action=request.action,
-        result=request.result,
-        next_step=request.next_step,
-        duration_minutes=request.duration_minutes or 0
-    )
+    if existing.status == "closed":
+        raise HTTPException(status_code=400, detail="已关闭的异常单不允许追加处理记录，如需修改请先重新开启")
+    try:
+        record = _db.add_processing_record(
+            exception_id=exception_id,
+            processor=request.processor,
+            action=request.action,
+            result=request.result,
+            next_step=request.next_step,
+            duration_minutes=request.duration_minutes or 0
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return ok(
         data=record.model_dump(mode="json") if record else None,
         message="处理记录已追加"
