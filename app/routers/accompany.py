@@ -9,6 +9,7 @@ from ..schemas import (
     AccompanyFollowUpCreate, AppointmentStatus, ServiceWindow
 )
 from ..database import Database
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/accompany", tags=["长者办事陪同资源匹配与预约派单"])
 _db: Optional[Database] = None
@@ -17,10 +18,6 @@ _db: Optional[Database] = None
 def set_db(db: Database):
     global _db
     _db = db
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 # ========== 陪同资源配置 ==========

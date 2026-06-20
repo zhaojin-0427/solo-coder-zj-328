@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from ..schemas import UniformResponse, CodeEnum
 from ..database import Database
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/history", tags=["历史查询"])
 _db: Optional[Database] = None
@@ -10,10 +11,6 @@ _db: Optional[Database] = None
 def set_db(db: Database):
     global _db
     _db = db
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 @router.get("", response_model=UniformResponse, summary="分页查询校验历史")

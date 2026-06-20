@@ -9,6 +9,7 @@ from ..schemas import (
     DisposalPriority, ServiceWindow
 )
 from ..database import Database
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/exceptions", tags=["办事过程异常上报与闭环处置"])
 _db: Optional[Database] = None
@@ -17,10 +18,6 @@ _db: Optional[Database] = None
 def set_db(db: Database):
     global _db
     _db = db
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 @router.post("", response_model=UniformResponse, summary="上报异常事件并自动生成处置单")

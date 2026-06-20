@@ -647,24 +647,47 @@ class ResponsibleRole(str, Enum):
     MEDICAL_STAFF = "medical_staff"
 
 
-class ExceptionSourceType(str, Enum):
-    VERIFY_RECORD = "verify_record"
-    PRE_REVIEW_ORDER = "pre_review_order"
-    ACCOMPANY_APPOINTMENT = "accompany_appointment"
-
-
 class ExceptionCreateRequest(BaseModel):
-    exception_type: ExceptionType
-    source_type: ExceptionSourceType
-    source_id: int = Field(..., description="关联来源记录ID: 校验记录ID/预审工单ID/陪同预约单ID")
-    reporter: str = Field(..., min_length=1, max_length=50, description="上报人姓名")
-    reporter_role: str = Field(..., min_length=1, max_length=50, description="上报人角色")
-    reporter_phone: Optional[str] = Field(None, pattern=r"^1[3-9]\d{9}$", description="上报人联系电话")
-    description: str = Field(..., min_length=1, max_length=500, description="异常详情描述")
-    location: Optional[str] = Field(None, max_length=200, description="发生地点/窗口")
-    impact_completion: bool = Field(True, description="是否影响办事完成")
-    evidence_images: List[str] = []
+    source_type: str
+    source_id: int
+    exception_type: str
+    reporter: str
+    reporter_role: str
+    reporter_phone: Optional[str] = None
+    description: str
+    location: Optional[str] = None
+    impact_completion: bool = True
+    evidence_images: Optional[List[str]] = None
     extra_info: Optional[Dict[str, Any]] = None
+
+
+class ExceptionStatusUpdateRequest(BaseModel):
+    status: str
+    operator: str
+    remark: Optional[str] = None
+
+
+class ExceptionAssignRequest(BaseModel):
+    responsible_role: Optional[str] = None
+    responsible_person: str
+    responsible_phone: Optional[str] = None
+    assigned_by: str
+    assign_remark: Optional[str] = None
+
+
+class ExceptionProcessingRecordCreate(BaseModel):
+    processor: str
+    action: str
+    result: str
+    next_step: Optional[str] = None
+    duration_minutes: int = 0
+
+
+class ExceptionCloseRequest(BaseModel):
+    closed_by: str
+    close_remark: str
+    is_resolved: bool = True
+    follow_up_suggestion: Optional[str] = None
 
 
 class ExceptionDisposalOrder(BaseModel):
@@ -673,56 +696,38 @@ class ExceptionDisposalOrder(BaseModel):
     exception_type: str
     source_type: str
     source_id: int
-    item_code: Optional[str]
-    item_name: Optional[str]
-    elder_name: Optional[str]
-    elder_type: Optional[str]
-    community: Optional[str]
-    expected_window: Optional[str]
+    item_code: Optional[str] = None
+    item_name: Optional[str] = None
+    elder_name: Optional[str] = None
+    elder_type: Optional[str] = None
+    community: Optional[str] = None
+    expected_window: Optional[str] = None
     reporter: str
     reporter_role: str
-    reporter_phone: Optional[str]
+    reporter_phone: Optional[str] = None
     description: str
-    location: Optional[str]
-    impact_completion: bool
-    risk_level: str
-    status: str
-    priority: str
-    responsible_role: str
-    responsible_person: Optional[str]
-    responsible_phone: Optional[str]
-    suggested_actions: List[str]
-    latest_deadline: datetime
-    follow_up_required: bool
-    follow_up_deadline: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
-    closed_at: Optional[datetime]
-    closed_by: Optional[str]
-    close_remark: Optional[str]
+    location: Optional[str] = None
+    impact_completion: bool = True
+    risk_level: str = "medium"
+    status: str = "pending"
+    priority: str = "p3_medium"
+    responsible_role: str = "supervisor"
+    responsible_person: Optional[str] = None
+    responsible_phone: Optional[str] = None
+    suggested_actions: List[str] = []
+    latest_deadline: Optional[datetime] = None
+    follow_up_required: bool = True
+    follow_up_deadline: Optional[datetime] = None
+    evidence_images: Optional[List[str]] = None
+    extra_info: Optional[Dict[str, Any]] = None
+    closed_at: Optional[datetime] = None
+    closed_by: Optional[str] = None
+    close_remark: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-
-class ExceptionStatusUpdateRequest(BaseModel):
-    status: ExceptionStatus
-    operator: str = Field(..., min_length=1, description="操作人")
-    remark: Optional[str] = Field(None, max_length=500, description="状态变更说明")
-
-
-class ExceptionAssignRequest(BaseModel):
-    responsible_role: Optional[ResponsibleRole]
-    responsible_person: str = Field(..., min_length=1, max_length=50, description="责任人姓名")
-    responsible_phone: Optional[str] = Field(None, pattern=r"^1[3-9]\d{9}$", description="责任人联系电话")
-    assigned_by: str = Field(..., min_length=1, description="指派人")
-    assign_remark: Optional[str] = Field(None, max_length=500)
-
-
-class ExceptionProcessingRecordCreate(BaseModel):
-    exception_id: int
-    processor: str = Field(..., min_length=1, max_length=50, description="处理人")
-    action: str = Field(..., min_length=1, max_length=200, description="处理动作")
-    result: str = Field(..., min_length=1, max_length=1000, description="处理结果描述")
-    next_step: Optional[str] = Field(None, max_length=500)
-    duration_minutes: Optional[int] = Field(0, ge=0)
+    class Config:
+        from_attributes = True
 
 
 class ExceptionProcessingRecord(BaseModel):
@@ -731,40 +736,25 @@ class ExceptionProcessingRecord(BaseModel):
     processor: str
     action: str
     result: str
-    next_step: Optional[str]
-    duration_minutes: int
-    created_at: datetime
+    next_step: Optional[str] = None
+    duration_minutes: int = 0
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 
 class ExceptionStatusHistory(BaseModel):
     id: int
     exception_id: int
-    from_status: Optional[str]
+    from_status: Optional[str] = None
     to_status: str
     operator: str
-    remark: Optional[str]
-    created_at: datetime
+    remark: Optional[str] = None
+    created_at: Optional[datetime] = None
 
-
-class ExceptionDetail(BaseModel):
-    order: ExceptionDisposalOrder
-    source_info: Optional[Dict[str, Any]]
-    processing_records: List[ExceptionProcessingRecord]
-    status_history: List[ExceptionStatusHistory]
-
-
-class ExceptionListResponse(BaseModel):
-    total: int
-    page: int
-    page_size: int
-    items: List[ExceptionDisposalOrder]
-
-
-class ExceptionCloseRequest(BaseModel):
-    closed_by: str = Field(..., min_length=1, description="关闭确认人")
-    close_remark: str = Field(..., min_length=1, max_length=500, description="关闭说明")
-    is_resolved: bool = Field(True, description="是否已解决")
-    follow_up_suggestion: Optional[str] = Field(None, max_length=500)
+    class Config:
+        from_attributes = True
 
 
 class ExceptionStatsItemRank(BaseModel):
@@ -808,8 +798,8 @@ class ExceptionStatsOverall(BaseModel):
 class PolicyChangeStatus(str, Enum):
     DRAFT = "draft"
     ACTIVE = "active"
-    INACTIVE = "inactive"
     EXPIRED = "expired"
+    REVOKED = "revoked"
 
 
 class PolicyRiskLevel(str, Enum):
@@ -819,20 +809,9 @@ class PolicyRiskLevel(str, Enum):
     CRITICAL = "critical"
 
 
-class PolicyImpactType(str, Enum):
-    MATERIAL_ADD = "material_add"
-    MATERIAL_REMOVE = "material_remove"
-    MATERIAL_MODIFY = "material_modify"
-    PROCESS_CHANGE = "process_change"
-    ELIGIBILITY_CHANGE = "eligibility_change"
-    WINDOW_CHANGE = "window_change"
-    OTHER = "other"
-
-
 class WarningStatus(str, Enum):
     UNCONFIRMED = "unconfirmed"
     CONFIRMED = "confirmed"
-    PROCESSED = "processed"
     IGNORED = "ignored"
 
 
@@ -840,75 +819,73 @@ class WarningSourceType(str, Enum):
     VERIFY_RECORD = "verify_record"
     PRE_REVIEW_ORDER = "pre_review_order"
     ACCOMPANY_APPOINTMENT = "accompany_appointment"
-    EXCEPTION_ORDER = "exception_order"
-    SERVICE_ITEM = "service_item"
 
 
 class PolicyChangeCreate(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200, description="政策变更标题")
-    applicable_items: List[str] = Field(..., description="适用事项编码列表")
-    applicable_windows: List[ServiceWindow] = []
-    impacted_materials: List[str] = []
-    impacted_elder_types: List[ElderType] = []
-    effective_date: str = Field(..., description="生效日期 YYYY-MM-DD")
-    expiry_date: Optional[str] = Field(None, description="失效日期 YYYY-MM-DD")
-    policy_source: str = Field(..., min_length=1, max_length=200, description="政策来源")
-    risk_level: PolicyRiskLevel = PolicyRiskLevel.MEDIUM
-    handling_suggestion: str = Field("", max_length=1000, description="处理建议")
-    impact_types: List[PolicyImpactType] = []
-    description: str = Field("", max_length=2000, description="政策变更详细描述")
-    added_materials: List[Dict[str, Any]] = []
-    removed_materials: List[Dict[str, Any]] = []
-    rejection_reasons: List[str] = []
-    status: PolicyChangeStatus = PolicyChangeStatus.DRAFT
+    title: str
+    applicable_items: Optional[List[str]] = []
+    applicable_windows: Optional[List[str]] = []
+    impacted_materials: Optional[List[Dict[str, Any]]] = []
+    impacted_elder_types: Optional[List[str]] = []
+    effective_date: str
+    expiry_date: Optional[str] = None
+    policy_source: str = ""
+    risk_level: Optional[str] = "medium"
+    handling_suggestion: str = ""
+    impact_types: Optional[List[str]] = []
+    description: str = ""
+    added_materials: Optional[List[Dict[str, Any]]] = []
+    removed_materials: Optional[List[Dict[str, Any]]] = []
+    rejection_reasons: Optional[List[str]] = []
 
 
 class PolicyChangeUpdate(BaseModel):
     title: Optional[str] = None
     applicable_items: Optional[List[str]] = None
-    applicable_windows: Optional[List[ServiceWindow]] = None
-    impacted_materials: Optional[List[str]] = None
-    impacted_elder_types: Optional[List[ElderType]] = None
+    applicable_windows: Optional[List[str]] = None
+    impacted_materials: Optional[List[Dict[str, Any]]] = None
+    impacted_elder_types: Optional[List[str]] = None
     effective_date: Optional[str] = None
     expiry_date: Optional[str] = None
     policy_source: Optional[str] = None
-    risk_level: Optional[PolicyRiskLevel] = None
+    risk_level: Optional[str] = None
     handling_suggestion: Optional[str] = None
-    impact_types: Optional[List[PolicyImpactType]] = None
+    impact_types: Optional[List[str]] = None
     description: Optional[str] = None
     added_materials: Optional[List[Dict[str, Any]]] = None
     removed_materials: Optional[List[Dict[str, Any]]] = None
     rejection_reasons: Optional[List[str]] = None
-    status: Optional[PolicyChangeStatus] = None
+    status: Optional[str] = None
+
+
+class PolicyWarningConfirmRequest(BaseModel):
+    confirmed_by: str
+    confirm_remark: Optional[str] = None
 
 
 class PolicyChange(BaseModel):
     id: int
     title: str
-    applicable_items: List[str]
-    applicable_windows: List[str]
-    impacted_materials: List[str]
-    impacted_elder_types: List[str]
+    applicable_items: List[str] = []
+    applicable_windows: List[str] = []
+    impacted_materials: List[Dict[str, Any]] = []
+    impacted_elder_types: List[str] = []
     effective_date: str
-    expiry_date: Optional[str]
-    policy_source: str
-    risk_level: str
-    handling_suggestion: str
-    impact_types: List[str]
-    description: str
-    added_materials: List[Dict[str, Any]]
-    removed_materials: List[Dict[str, Any]]
-    rejection_reasons: List[str]
-    status: str
-    created_at: datetime
-    updated_at: datetime
+    expiry_date: Optional[str] = None
+    policy_source: str = ""
+    risk_level: str = "medium"
+    handling_suggestion: str = ""
+    impact_types: List[str] = []
+    description: str = ""
+    added_materials: List[Dict[str, Any]] = []
+    removed_materials: List[Dict[str, Any]] = []
+    rejection_reasons: List[str] = []
+    status: str = "draft"
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-
-class PolicyChangeDetail(BaseModel):
-    policy: PolicyChange
-    impact_summary: Dict[str, Any]
-    warning_count: int
-    confirmed_warning_count: int
+    class Config:
+        from_attributes = True
 
 
 class PolicyWarning(BaseModel):
@@ -917,68 +894,21 @@ class PolicyWarning(BaseModel):
     policy_title: str
     source_type: str
     source_id: int
-    source_no: Optional[str]
-    item_code: Optional[str]
-    item_name: Optional[str]
-    elder_name: Optional[str]
-    elder_type: Optional[str]
-    community: Optional[str]
-    expected_window: Optional[str]
-    appointment_date: Optional[str]
-    risk_level: str
-    status: str
-    impact_details: List[Dict[str, Any]]
-    created_at: datetime
-    confirmed_at: Optional[datetime]
-    confirmed_by: Optional[str]
-
-
-class PolicyWarningListResponse(BaseModel):
-    total: int
-    page: int
-    page_size: int
-    items: List[PolicyWarning]
-
-
-class PolicyImpactQuery(BaseModel):
-    elder_type: Optional[ElderType] = None
+    source_no: Optional[str] = None
     item_code: Optional[str] = None
+    item_name: Optional[str] = None
+    elder_name: Optional[str] = None
+    elder_type: Optional[str] = None
     community: Optional[str] = None
-    expected_window: Optional[ServiceWindow] = None
+    expected_window: Optional[str] = None
     appointment_date: Optional[str] = None
+    risk_level: str = "medium"
+    status: str = "unconfirmed"
+    impact_details: List[Dict[str, Any]] = []
+    confirmed_at: Optional[str] = None
+    confirmed_by: Optional[str] = None
+    confirm_remark: Optional[str] = None
+    created_at: Optional[datetime] = None
 
-
-class PolicyImpactResult(BaseModel):
-    is_affected: bool
-    affected_policies: List[Dict[str, Any]]
-    added_materials: List[Dict[str, Any]]
-    removed_materials: List[Dict[str, Any]]
-    rejection_reasons: List[str]
-    suggestions: List[str]
-    need_re_preview: bool
-    need_re_appointment: bool
-
-
-class PolicyStatsOverall(BaseModel):
-    total_policy_changes: int
-    active_policy_count: int
-    total_warnings: int
-    confirmed_warnings: int
-    unconfirmed_high_risk_warnings: int
-    item_policy_impact_ranking: List[Dict[str, Any]]
-    policy_exception_ratio: float
-    policy_exception_count: int
-    total_exceptions: int
-
-
-class PolicyWarningConfirmRequest(BaseModel):
-    confirmed_by: str = Field(..., min_length=1, max_length=50, description="确认人")
-    confirm_remark: Optional[str] = Field(None, max_length=500, description="确认备注")
-
-
-class PolicyScanResult(BaseModel):
-    policy_change_id: int
-    policy_title: str
-    scanned_sources: Dict[str, Any]
-    new_warnings_count: int
-    total_affected_count: int
+    class Config:
+        from_attributes = True

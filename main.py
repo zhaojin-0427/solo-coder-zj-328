@@ -23,13 +23,13 @@ def uniform_error(code: int, message: str) -> UniformResponse:
 
 
 app = FastAPI(
-    title="长者办事材料校验、窗口预审与异常闭环处置 API 服务",
+    title="长者办事材料校验与窗口预审工单 API 服务",
     description=(
         "为老人办理医保报销、社保认证、银行卡挂失、住院登记等事项提供材料校验、"
         "缺件提示、代办关系判断、历史查询、窗口预审工单生成、一次性告知、"
-        "补齐复核、陪同资源匹配预约、办事过程异常上报与闭环处置和统计分析服务。"
+        "补齐复核和统计分析服务。"
     ),
-    version="3.0.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )

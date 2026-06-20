@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query
 from typing import Optional
 from ..schemas import UniformResponse, CodeEnum, ServiceWindow
 from ..database import Database
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/stats", tags=["统计分析"])
 _db: Optional[Database] = None
@@ -10,10 +11,6 @@ _db: Optional[Database] = None
 def set_db(db: Database):
     global _db
     _db = db
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 @router.get("/overall", response_model=UniformResponse, summary="综合统计看板")

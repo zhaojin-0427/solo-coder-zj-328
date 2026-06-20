@@ -2,13 +2,14 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import json
 
-from .schemas import (
+from ..schemas import (
     PreReviewSubmitRequest, PreReviewStatus, RiskLevel, ServiceWindow,
     ElderType, AgentRelation, MaterialCategory, VerifyResult, MissingDetail,
     SubmittedMaterial, MaterialSpec, PrintableCheckSummary, MaterialCheckSummaryItem
 )
-from .rules import RuleEngine, MATERIAL_LABELS, AGENT_RELATION_RULES, ELDER_TYPE_LABELS, PHOTO_SPEC_LABELS
-from .database import Database
+from ..rules import RuleEngine, MATERIAL_LABELS, AGENT_RELATION_RULES, ELDER_TYPE_LABELS, PHOTO_SPEC_LABELS
+from ..repositories.pre_review_repo import PreReviewRepository
+from ..db_utils import now_iso, enum_value, json_dumps, bool_to_int, int_to_bool, generate_no, json_loads
 
 
 RISK_LABELS = {
@@ -366,7 +367,7 @@ def _analyze_repeated_missing(order, linked_orders: List[Dict]) -> List[Dict[str
     if not linked_orders:
         return []
 
-    current_missing = json.loads(order.missing_list_json) if order.missing_list_json else []
+    current_missing = json_loads(order.missing_list_json)
     current_missing_keys = set()
     for m in current_missing:
         key = (m.get("category"), m.get("name"))
@@ -380,7 +381,7 @@ def _analyze_repeated_missing(order, linked_orders: List[Dict]) -> List[Dict[str
                 linked_missing_str = linked.get("missing_list_json", "[]")
             if linked_missing_str:
                 try:
-                    linked_missing = json.loads(linked_missing_str) if isinstance(linked_missing_str, str) else linked_missing_str
+                    linked_missing = json_loads(linked_missing_str) if isinstance(linked_missing_str, str) else linked_missing_str
                 except Exception:
                     linked_missing = []
             else:
@@ -423,7 +424,7 @@ def _reason_hint(missing_type: str) -> str:
 
 
 class PreReviewService:
-    def __init__(self, db: Database, engine: RuleEngine):
+    def __init__(self, db: PreReviewRepository, engine: RuleEngine):
         self.db = db
         self.engine = engine
 
@@ -574,9 +575,9 @@ class PreReviewService:
         if not order:
             return None
 
-        missing_list = json.loads(order.missing_list_json) if order.missing_list_json else []
-        ready_materials = json.loads(order.ready_materials_json) if order.ready_materials_json else []
-        check_summary = json.loads(order.check_summary_json) if order.check_summary_json else {}
+        missing_list = json_loads(order.missing_list_json)
+        ready_materials = json_loads(order.ready_materials_json)
+        check_summary = json_loads(order.check_summary_json, default={})
 
         linked_orders = self.db.get_linked_orders(
             elder_id_card=order.elder_id_card,
@@ -614,10 +615,10 @@ class PreReviewService:
         item = self.db.get_item(order.item_code)
         missing_before = order.total_missing
 
-        original_ready_materials = json.loads(order.ready_materials_json) if order.ready_materials_json else []
+        original_ready_materials = json_loads(order.ready_materials_json)
 
         if supplemented and item:
-            from .schemas import SubmittedMaterial as SM
+            from ..schemas import SubmittedMaterial as SM
             submats = [SM(**m) if isinstance(m, dict) else m for m in supplemented]
 
             merged_submitted = []
@@ -661,13 +662,13 @@ class PreReviewService:
             except Exception:
                 missing_after = max(0, missing_before - len(supplemented))
                 is_pass_new = missing_after == 0
-                missing_list_new = json.loads(order.missing_list_json)
+                missing_list_new = json_loads(order.missing_list_json)
                 total_ready_new = order.total_ready
                 ready_materials_new = original_ready_materials
         else:
             missing_after = 0 if review_result else max(0, missing_before - 1)
             is_pass_new = review_result
-            missing_list_new = [] if review_result else json.loads(order.missing_list_json)
+            missing_list_new = [] if review_result else json_loads(order.missing_list_json)
             total_ready_new = order.total_required if review_result else order.total_ready
             ready_materials_new = original_ready_materials
 

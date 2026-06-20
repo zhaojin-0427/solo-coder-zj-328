@@ -8,6 +8,7 @@ from ..schemas import (
     PolicyWarningConfirmRequest, ServiceWindow, ElderType
 )
 from ..database import Database
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/policy", tags=["政策变更订阅与影响预警"])
 _db: Optional[Database] = None
@@ -16,10 +17,6 @@ _db: Optional[Database] = None
 def set_db(db: Database):
     global _db
     _db = db
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 @router.post("/changes", response_model=UniformResponse, summary="创建政策变更记录")

@@ -4,6 +4,7 @@ from ..schemas import (
     UniformResponse, CodeEnum, ServiceItemCreate, ServiceItemUpdate, ServiceItem
 )
 from ..database import Database
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/items", tags=["事项配置管理"])
 _db: Optional[Database] = None
@@ -12,10 +13,6 @@ _db: Optional[Database] = None
 def set_db(db: Database):
     global _db
     _db = db
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 @router.get("", response_model=UniformResponse, summary="查询所有事项配置")

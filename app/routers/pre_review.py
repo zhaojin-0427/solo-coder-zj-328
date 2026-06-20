@@ -9,7 +9,8 @@ from ..schemas import (
 )
 from ..database import Database
 from ..rules import RuleEngine
-from ..pre_review_service import PreReviewService
+from ..services.pre_review_service import PreReviewService
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/pre-review", tags=["窗口预审与一次性告知工单"])
 _db: Optional[Database] = None
@@ -22,10 +23,6 @@ def set_db_and_engine(db: Database, engine: RuleEngine):
     _db = db
     _engine = engine
     _service = PreReviewService(db, engine)
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 @router.post("", response_model=UniformResponse, summary="提交窗口预审，生成预审工单")

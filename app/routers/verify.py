@@ -6,6 +6,7 @@ from ..schemas import (
 )
 from ..database import Database
 from ..rules import RuleEngine
+from ..db_utils import ok
 
 router = APIRouter(prefix="/api/verify", tags=["材料校验与缺件提示"])
 _db: Optional[Database] = None
@@ -16,10 +17,6 @@ def set_db_and_engine(db: Database, engine: RuleEngine):
     global _db, _engine
     _db = db
     _engine = engine
-
-
-def ok(data=None, message="success") -> UniformResponse:
-    return UniformResponse(code=CodeEnum.SUCCESS, message=message, data=data)
 
 
 @router.post("", response_model=UniformResponse, summary="提交材料进行校验")
